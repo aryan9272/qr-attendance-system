@@ -38,18 +38,18 @@ function GoogleGIcon() {
 
 const DEFAULT_GOOGLE_CLIENT_ID = '136625053294-olf8ok1trq36i3qbjt38vs4l8e84c1o2.apps.googleusercontent.com';
 
-// Dynamic API Resolver (Ensures Localhost & Mobile Wi-Fi both work 100% of the time)
+// Dynamic API Resolver (Ensures Vercel, Localhost & Mobile Wi-Fi all work 100% of the time)
 const getApiBaseEndpoints = () => {
   const endpoints = [];
+  if (import.meta.env.VITE_API_BASE_URL) endpoints.push(import.meta.env.VITE_API_BASE_URL.replace(/\/$/, ''));
+  if (import.meta.env.VITE_BACKEND_URL) endpoints.push(import.meta.env.VITE_BACKEND_URL.replace(/\/$/, ''));
   if (typeof window !== 'undefined' && window.location) {
     if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
       endpoints.push('http://localhost:5000');
-    } else {
+    } else if (!window.location.hostname.includes('vercel.app')) {
       endpoints.push(`http://${window.location.hostname}:5000`);
     }
   }
-  if (import.meta.env.VITE_API_BASE_URL) endpoints.push(import.meta.env.VITE_API_BASE_URL);
-  if (import.meta.env.VITE_BACKEND_URL) endpoints.push(import.meta.env.VITE_BACKEND_URL);
   endpoints.push('http://localhost:5000');
 
   return [...new Set(endpoints)];
