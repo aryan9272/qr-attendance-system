@@ -1,0 +1,25 @@
+const mongoose = require('mongoose');
+
+let isConnected = false;
+
+const connectDB = async () => {
+  try {
+    const connStr = process.env.MONGO_URI || 'mongodb://localhost:27017/qr_attendance';
+    mongoose.set('strictQuery', false);
+    
+    // Connect with a short timeout so backend starts instantly even if MongoDB daemon is inactive
+    await mongoose.connect(connStr, {
+      serverSelectionTimeoutMS: 3000,
+    });
+    
+    isConnected = true;
+    console.log(`[MongoDB] Connected successfully: ${mongoose.connection.host}`);
+  } catch (error) {
+    isConnected = false;
+    console.warn(`[MongoDB Warning] Could not connect to MongoDB (${error.message}). Running in hybrid/in-memory fallback mode.`);
+  }
+};
+
+const getIsConnected = () => isConnected;
+
+module.exports = { connectDB, getIsConnected };
