@@ -1,0 +1,211 @@
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const Admin = require('../models/Admin');
+const { sendProctorOtpEmail } = require('./mailer');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'proxyqr-super-secret-jwt-key-2026';
+const DEFAULT_MASTER_PASS = '2024BIT020@2026';
+
+// In-Memory OTP Store with Rate-Limiting Sentinel
+// Key: 'owner_otp' -> { code, expiresAt, attempts, requests: [timestamps], lockedUntil }
+const otpStore = {
+  code: null,
+  expiresAt: 0,
+  failedAttempts: 0,
+  lockedUntil: 0,
+  requestTimestamps: [],
+};
+
+/**
+ * Ensure single Admin document exists in DB with hashed password
+ */
+async function getOrInitAdmin() {
+  const ownerEmail = (process.env.ADMIN_OWNER_EMAIL || 'admin@proxyqr.com').toLowerCase().trim();
+  let admin = await Admin.findOne({ email: ownerEmail });
+
+  if (!admin) {
+    // Check if any admin exists
+    admin = await Admin.findOne();
+  }
+
+  if (!admin) {
+    const salt = await bcrypt.genSalt(10);
+    const hash = await bcrypt.hash(process.env.ADMIN_PASSWORD_INIT || DEFAULT_MASTER_PASS, salt);
+
+    admin = await Admin.create({
+      email: ownerEmail,
+      passwordHash: hash,
+      tokenVersion: 1,
+    });
+    console.log(`[Admin Security] Created initial Master Admin account for: ${ownerEmail}`);
+  }
+
+  return admin;
+}
+
+/**
+ * Verify Master Password
+ */
+async function verifyMasterPassword(passwordInput) {
+  const admin = await getOrInitAdmin();
+  
+  // Also check environment bcrypt hash if provided directly in ADMIN_PASSWORD_HASH
+  if (process.env.ADMIN_PASSWORD_HASH && process.env.ADMIN_PASSWORD_HASH.startsWith('$2')) {
+    const matchEnv = await bcrypt.compare(passwordInput, process.env.ADMIN_PASSWORD_HASH);
+    if (matchEnv) return admin;
+  }
+
+  const isMatch = await bcrypt.compare(passwordInput, admin.passwordHash);
+  if (!isMatch) return null;
+
+  return admin;
+}
+
+/**
+ * Update Master Password
+ */
+async function updateMasterPassword(currentPassword, newPassword) {
+  const admin = await verifyMasterPassword(currentPassword);
+  if (!admin) {
+    throw new Error('Current master password is incorrect.');
+  }
+
+  if (!newPassword || newPassword.length < 8) {
+    throw new Error('New master password must be at least 8 characters long.');
+  }
+
+  const salt = await bcrypt.genSalt(10);
+  const newHash = await bcrypt.hash(newPassword, salt);
+
+  admin.passwordHash = newHash;
+  admin.tokenVersion += 1; // Also invalidates all active sessions
+  await admin.save();
+
+  return admin;
+}
+
+/**
+ * Increment token version (Logout All Devices)
+ */
+async function incrementTokenVersion() {
+  const admin = await getOrInitAdmin();
+  admin.tokenVersion += 1;
+  await admin.save();
+  return admin.tokenVersion;
+}
+
+/**
+ * Request Delegated Proctor OTP
+ */
+async function requestProctorOtp() {
+  const now = Date.now();
+
+  // Check 30-minute Lockout
+  if (otpStore.lockedUntil > now) {
+    const remainingMins = Math.ceil((otpStore.lockedUntil - now) / 60000);
+    throw new Error(`OTP verification is temporarily locked due to failed attempts. Try again in ${remainingMins} minutes.`);
+  }
+
+  // Rate Limiting: Max 3 OTP requests per 15-minute window
+  otpStore.requestTimestamps = otpStore.requestTimestamps.filter((ts) => now - ts < 15 * 60 * 1000);
+  if (otpStore.requestTimestamps.length >= 3) {
+    throw new Error('Too many OTP requests. Maximum 3 requests allowed per 15 minutes.');
+  }
+
+  // Generate Cryptographically Secure 6-Digit Numeric OTP
+  const numericOtp = crypto.randomInt(100000, 999999).toString();
+
+  otpStore.code = numericOtp;
+  otpStore.expiresAt = now + 5 * 60 * 1000; // 5 Minutes Expiry
+  otpStore.failedAttempts = 0;
+  otpStore.requestTimestamps.push(now);
+
+  // Dispatch Email via Brevo SMTP
+  await sendProctorOtpEmail(numericOtp);
+
+  return { success: true, message: 'OTP dispatched to preconfigured administrator email.' };
+}
+
+/**
+ * Verify Delegated Proctor OTP
+ */
+async function verifyProctorOtp(otpInput) {
+  const now = Date.now();
+
+  if (otpStore.lockedUntil > now) {
+    const remainingMins = Math.ceil((otpStore.lockedUntil - now) / 60000);
+    throw new Error(`OTP verification is locked. Try again in ${remainingMins} minutes.`);
+  }
+
+  if (!otpStore.code || otpStore.expiresAt < now) {
+    throw new Error('OTP has expired or has not been requested. Please request a new OTP.');
+  }
+
+  if (otpInput.trim() !== otpStore.code) {
+    otpStore.failedAttempts += 1;
+    if (otpStore.failedAttempts >= 5) {
+      otpStore.lockedUntil = now + 30 * 60 * 1000; // 30 Minute Lockout
+      otpStore.code = null;
+      throw new Error('Maximum failed attempts reached. OTP verification locked for 30 minutes.');
+    }
+    throw new Error(`Invalid OTP code. ${5 - otpStore.failedAttempts} attempt(s) remaining.`);
+  }
+
+  // Single-Use: Invalidate OTP immediately upon success
+  otpStore.code = null;
+  otpStore.expiresAt = 0;
+  otpStore.failedAttempts = 0;
+
+  const admin = await getOrInitAdmin();
+  return admin;
+}
+
+/**
+ * Sign JWT Payload
+ */
+function generateAdminJwt(admin, isOtp = false) {
+  const expiresIn = isOtp ? '90m' : '7d';
+  const expiresAtMs = Date.now() + (isOtp ? 90 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000);
+
+  const payload = {
+    adminId: admin._id,
+    email: admin.email,
+    tokenVersion: admin.tokenVersion,
+    isOtp,
+    expiresAtMs,
+  };
+
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn });
+  return { token, payload, expiresIn };
+}
+
+/**
+ * Verify Admin JWT
+ */
+async function verifyJwt(tokenStr) {
+  try {
+    const decoded = jwt.verify(tokenStr, JWT_SECRET);
+    const admin = await getOrInitAdmin();
+
+    if (decoded.tokenVersion < admin.tokenVersion) {
+      throw new Error('Session invalidated by admin. Please log in again.');
+    }
+
+    return { decoded, admin };
+  } catch (err) {
+    throw new Error(err.message || 'Invalid or expired token.');
+  }
+}
+
+module.exports = {
+  getOrInitAdmin,
+  verifyMasterPassword,
+  updateMasterPassword,
+  incrementTokenVersion,
+  requestProctorOtp,
+  verifyProctorOtp,
+  generateAdminJwt,
+  verifyJwt,
+  JWT_SECRET,
+};

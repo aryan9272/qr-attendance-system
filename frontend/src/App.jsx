@@ -1,15 +1,15 @@
 import React, { Component } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
-import FacultyQRDisplay from './components/FacultyQRDisplay';
+import AdminDashboard from './components/AdminDashboard';
 import StudentScanner from './components/StudentScanner';
-import FacultyAuth from './components/FacultyAuth';
+import AdminAuth from './components/AdminAuth';
 import { SocketProvider } from './context/SocketContext';
 import { ThemeProvider } from './context/ThemeContext';
 
 /**
  * Global Error Boundary to catch any unexpected runtime component crashes
- * and silently recover directly to the Faculty Authentication form.
+ * and silently recover directly to the Admin Authentication portal.
  */
 class GlobalErrorBoundary extends Component {
   constructor(props) {
@@ -24,40 +24,40 @@ class GlobalErrorBoundary extends Component {
   componentDidCatch(error, errorInfo) {
     console.error('[GlobalErrorBoundary] Caught rendering error:', error, errorInfo);
     try {
-      localStorage.clear();
+      localStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_user');
       sessionStorage.clear();
-    } catch (e) {
-      // Ignore
-    }
+    } catch (e) {}
   }
 
   render() {
     if (this.state.hasError) {
-      return <FacultyAuth />;
+      return <AdminAuth />;
     }
     return this.props.children;
   }
 }
 
 /**
- * Protected Route Wrapper for Faculty Dashboard
+ * Protected Route Wrapper for Admin Console Dashboard
  */
-function ProtectedFacultyRoute({ children }) {
+function ProtectedAdminRoute({ children }) {
   try {
-    const token = localStorage.getItem('faculty_token');
+    const token = localStorage.getItem('admin_token');
     if (!token || token === 'undefined' || token === 'null' || token === 'token_faculty_direct_access') {
-      localStorage.removeItem('faculty_token');
-      localStorage.removeItem('faculty_user');
-      return <Navigate to="/faculty/login" replace />;
+      localStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_user');
+      return <Navigate to="/admin/login" replace />;
     }
     return children;
   } catch (err) {
-    console.warn('[ProtectedFacultyRoute] Token verification error:', err);
+    console.warn('[ProtectedAdminRoute] Token verification error:', err);
     try {
-      localStorage.clear();
+      localStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_user');
       sessionStorage.clear();
     } catch (e) {}
-    return <Navigate to="/faculty/login" replace />;
+    return <Navigate to="/admin/login" replace />;
   }
 }
 
@@ -72,14 +72,24 @@ export default function App() {
 
               <main className="container mx-auto pb-12">
                 <Routes>
-                  <Route path="/faculty/login" element={<FacultyAuth />} />
+                  <Route path="/admin/login" element={<AdminAuth />} />
+                  <Route path="/faculty/login" element={<Navigate to="/admin/login" replace />} />
 
                   <Route
                     path="/"
                     element={
-                      <ProtectedFacultyRoute>
-                        <FacultyQRDisplay />
-                      </ProtectedFacultyRoute>
+                      <ProtectedAdminRoute>
+                        <AdminDashboard />
+                      </ProtectedAdminRoute>
+                    }
+                  />
+
+                  <Route
+                    path="/admin"
+                    element={
+                      <ProtectedAdminRoute>
+                        <AdminDashboard />
+                      </ProtectedAdminRoute>
                     }
                   />
 

@@ -1,59 +1,89 @@
 const mongoose = require('mongoose');
 
-const attendanceSchema = new mongoose.Schema(
+const AttendanceSchema = new mongoose.Schema(
   {
-    user: {
+    sessionId: {
+      type: String,
+      required: true,
+      index: true,
+      uppercase: true,
+    },
+    studentId: {
       type: String,
       required: true,
       trim: true,
     },
-    userName: {
+    regNo: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    studentName: {
       type: String,
       required: true,
       trim: true,
     },
     email: {
       type: String,
-      trim: true,
-    },
-    regNo: {
-      type: String,
+      required: true,
+      lowercase: true,
       trim: true,
     },
     year: {
       type: String,
-      trim: true,
+      default: '',
     },
     branch: {
       type: String,
-      trim: true,
+      default: '',
     },
     mobileNumber: {
       type: String,
-      trim: true,
       default: '',
     },
-    customData: {
-      type: Object,
-      default: {},
-    },
-    event: {
+    verificationMode: {
       type: String,
-      required: true,
-      trim: true,
+      enum: ['GPS_VERIFIED', 'ADMIN_MANUAL_OVERRIDE', 'WIFI_VERIFIED', 'SUSPICIOUS_PROXY'],
+      default: 'GPS_VERIFIED',
     },
-    location: {
-      latitude: { type: Number, required: true },
-      longitude: { type: Number, required: true },
+    overrideReason: {
+      type: String,
+      default: '',
     },
+    editedBy: {
+      type: String,
+      default: '',
+    },
+    editedAt: {
+      type: Date,
+      default: null,
+    },
+    editHistory: [
+      {
+        previousValues: Object,
+        reason: String,
+        editedAt: { type: Date, default: Date.now },
+      },
+    ],
     distanceFromTargetMeters: {
       type: Number,
-      required: true,
+      default: 0,
     },
-    status: {
+    userLocation: {
+      latitude: { type: Number, default: 0 },
+      longitude: { type: Number, default: 0 },
+    },
+    deviceUuid: {
       type: String,
-      enum: ['VERIFIED', 'FAILED_GEOFENCE', 'EXPIRED_TOKEN', 'DUPLICATE'],
-      default: 'VERIFIED',
+      default: '',
+    },
+    clientIp: {
+      type: String,
+      default: '',
+    },
+    userAgent: {
+      type: String,
+      default: '',
     },
     timestamp: {
       type: Date,
@@ -65,7 +95,8 @@ const attendanceSchema = new mongoose.Schema(
   }
 );
 
-// Compound Unique Index: Prevents a student from marking attendance twice for the same event
-attendanceSchema.index({ user: 1, event: 1 }, { unique: true });
+// Compound index to prevent duplicate student attendance for the same session ID
+AttendanceSchema.index({ sessionId: 1, regNo: 1 }, { unique: true });
+AttendanceSchema.index({ sessionId: 1, email: 1 }, { unique: true });
 
-module.exports = mongoose.model('Attendance', attendanceSchema);
+module.exports = mongoose.model('Attendance', AttendanceSchema);

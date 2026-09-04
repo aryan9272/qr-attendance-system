@@ -1,113 +1,336 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
-import { QrCode, Radio, LogOut } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import {
+  ShieldCheck,
+  Radio,
+  Lock,
+  LogOut,
+  KeyRound,
+  UserCheck,
+  AlertTriangle,
+  X,
+  Play,
+  Clock,
+  Sparkles,
+} from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
 
 export default function Navbar() {
-  const { connected } = useSocket();
   const location = useLocation();
+  const navigate = useNavigate();
+  const { connected, backendUrl, joinSession } = useSocket();
 
-  const isStudentView = location.pathname.startsWith('/scan');
-  const isFacultyLoginPage = location.pathname === '/faculty/login';
-  const [facultyUser, setFacultyUser] = useState(null);
+  const [adminUser, setAdminUser] = useState(null);
+  const [unterminatedSessions, setUnterminatedSessions] = useState([]);
+  const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false);
+
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const isAdminRoute = location.pathname.startsWith('/admin') || location.pathname === '/';
+  const isLoginPage = location.pathname === '/admin/login';
+
+  const checkAdminSession = async () => {
+    try {
+      const stored = localStorage.getItem('admin_user');
+      if (stored) {
+        setAdminUser(JSON.parse(stored));
+      }
+
+      // Fetch fresh session state and unterminated sessions from backend
+      const token = localStorage.getItem('admin_token');
+      if (token) {
+        const res = await fetch(`${backendUrl}/api/admin/me`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'x-admin-token': token,
+          },
+        });
+        const data = await res.json();
+        if (data?.success && data?.admin) {
+          setAdminUser(data.admin);
+          localStorage.setItem('admin_user', JSON.stringify(data.admin));
+          if (Array.isArray(data.unterminatedSessions)) {
+            setUnterminatedSessions(data.unterminatedSessions.filter((s) => s.status !== 'TERMINATED'));
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Navbar] Session check error:', e);
+    }
+  };
 
   useEffect(() => {
-    const saved = localStorage.getItem('faculty_user');
-    if (saved) {
-      try {
-        setFacultyUser(JSON.parse(saved));
-      } catch (e) {
-        setFacultyUser(null);
-      }
-    } else {
-      setFacultyUser(null);
-    }
-  }, [location.pathname]);
+    checkAdminSession();
+  }, [location.pathname, backendUrl]);
 
-  const handleFacultyLogout = () => {
+  const handleLogout = async () => {
     try {
-      localStorage.clear();
-      sessionStorage.clear();
+      const token = localStorage.getItem('admin_token');
+      await fetch(`${backendUrl}/api/admin/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
+      }).catch(() => {});
+    } catch (e) {}
+
+    localStorage.removeItem('admin_token');
+    localStorage.removeItem('admin_user');
+    sessionStorage.clear();
+    setAdminUser(null);
+    navigate('/admin/login');
+  };
+
+  const handleLogoutAll = async () => {
+    if (!window.confirm('Are you sure you want to revoke all active sessions across all devices?')) return;
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      await fetch(`${backendUrl}/api/admin/auth/logout-all`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
+      });
+      alert('All active admin sessions have been revoked.');
     } catch (e) {
-      console.warn('Error clearing storage on logout:', e);
+      alert('Error revoking sessions: ' + e.message);
     }
-    window.location.href = '/faculty/login';
+
+    handleLogout();
+  };
+
+  const handleChangePasswordSubmit = async (e) => {
+    e.preventDefault();
+    setPasswordError('');
+    setPasswordSuccess('');
+
+    if (!currentPassword || !newPassword) {
+      setPasswordError('Please fill in both current and new password.');
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      setPasswordError('New password must be at least 8 characters long.');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch(`${backendUrl}/api/admin/auth/change-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          'x-admin-token': token,
+        },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setPasswordError(data.message || 'Failed to update master password.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      if (data.token) {
+        localStorage.setItem('admin_token', data.token);
+      }
+
+      setPasswordSuccess('Master password updated successfully!');
+      setTimeout(() => {
+        setIsChangePasswordModalOpen(false);
+        setCurrentPassword('');
+        setNewPassword('');
+        setPasswordSuccess('');
+      }, 1200);
+    } catch (err) {
+      setPasswordError(err.message || 'Network error updating password.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const resumePausedSession = (sessionId) => {
+    joinSession(sessionId);
+    setUnterminatedSessions((prev) => prev.filter((s) => s.sessionId !== sessionId));
   };
 
   return (
-    <header className="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-xl sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 lg:px-8 h-16 flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <div className="p-2 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-600 shadow-[0_0_15px_rgba(6,182,212,0.4)]">
-            <QrCode className="w-5 h-5 text-slate-950 stroke-[2.5]" />
-          </div>
-          <div>
-            <h1 className="font-display font-bold text-lg tracking-tight text-white flex items-center gap-2">
-              ProxyQr
-              {isStudentView ? (
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
-                  STUDENT PORTAL
-                </span>
-              ) : isFacultyLoginPage ? (
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/30">
-                  FACULTY AUTH
-                </span>
-              ) : (
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/30">
-                  FACULTY ADMIN
-                </span>
-              )}
-            </h1>
-          </div>
-        </div>
+    <>
+      <header className="sticky top-0 z-50 bg-slate-950/80 backdrop-blur-xl border-b border-slate-800/80 select-none">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16 sm:h-20">
+            {/* Logo + Role Pill */}
+            <div className="flex items-center space-x-3">
+              <div className="p-2 sm:p-2.5 rounded-2xl bg-gradient-to-tr from-cyan-500/20 via-blue-500/20 to-indigo-500/20 border border-cyan-500/40 text-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.3)]">
+                <ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6" />
+              </div>
 
-        <div className="flex items-center space-x-3">
-          {!isFacultyLoginPage && (
-            <div
-              className={`flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-mono border transition-all ${
-                connected
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.2)]'
-                  : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
-              }`}
-            >
-              <Radio className={`w-3.5 h-3.5 ${connected ? 'animate-pulse' : ''}`} />
-              <span className="font-semibold uppercase tracking-wider text-[11px]">
-                {connected ? 'SOCKET ONLINE' : 'DISCONNECTED'}
-              </span>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
+                <span className="font-display font-black text-lg sm:text-xl tracking-tight text-white">
+                  ProxyQr
+                </span>
+                <span className="inline-flex items-center text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-slate-900 text-cyan-300 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.15)]">
+                  ADMIN CONSOLE
+                </span>
+              </div>
             </div>
-          )}
 
-          {!isFacultyLoginPage && !isStudentView && facultyUser && (
-            <div className="flex items-center space-x-3 pl-2 border-l border-slate-800">
-              <div className="flex items-center space-x-2">
-                {facultyUser.avatarUrl ? (
-                  <img
-                    src={facultyUser.avatarUrl}
-                    alt={facultyUser.name}
-                    className="w-8 h-8 rounded-full border border-cyan-500/40 object-cover"
-                  />
-                ) : (
-                  <div className="w-8 h-8 rounded-full bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center font-bold text-xs text-cyan-300">
-                    {facultyUser.name ? facultyUser.name.charAt(0) : 'A'}
-                  </div>
-                )}
-                <span className="hidden md:inline text-xs font-semibold text-slate-200">
-                  {facultyUser.name || 'Aryan Kale'}
+            {/* Status Indicator + Session Mode + Account Actions */}
+            <div className="flex items-center space-x-3 sm:space-x-4">
+              {/* Socket.IO Connection Dot */}
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs font-mono">
+                <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`}></span>
+                <span className={connected ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                  {connected ? 'SOCKET ONLINE' : 'SOCKET OFFLINE'}
                 </span>
               </div>
 
+              {/* Admin Mode Badge */}
+              {adminUser && !isLoginPage && (
+                <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-xs font-mono text-cyan-300">
+                  <UserCheck className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>
+                    {adminUser.isOtp ? '[Proctor Session (90m)]' : '[Master Admin]'}
+                  </span>
+                </div>
+              )}
+
+              {/* Account Controls */}
+              {adminUser && !isLoginPage && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsChangePasswordModalOpen(true)}
+                    className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 border border-slate-800 transition-colors cursor-pointer"
+                    title="Change Master Password"
+                  >
+                    <KeyRound className="w-4 h-4" />
+                  </button>
+
+                  <button
+                    onClick={handleLogoutAll}
+                    className="hidden sm:flex items-center gap-1 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-mono font-bold transition-colors cursor-pointer"
+                    title="Revoke all active sessions across devices"
+                  >
+                    <Lock className="w-3 h-3" />
+                    <span>Logout All</span>
+                  </button>
+
+                  <button
+                    onClick={handleLogout}
+                    className="p-2 sm:px-3 sm:py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-800 text-xs font-mono transition-colors cursor-pointer flex items-center gap-1.5"
+                    title="Log Out"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span className="hidden sm:inline">Logout</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Crash Guard Banner: Unterminated Paused Sessions Detected */}
+      {unterminatedSessions.length > 0 && !isLoginPage && (
+        <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2.5 text-xs font-mono text-amber-200 animate-fadeIn">
+          <div className="container mx-auto flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 animate-bounce" />
+              <span className="font-bold">
+                Paused Session Detected: [{unterminatedSessions[0].sessionId}] ({unterminatedSessions[0].title})
+              </span>
+            </div>
+
+            <button
+              onClick={() => resumePausedSession(unterminatedSessions[0].sessionId)}
+              className="flex items-center gap-1 px-3 py-1 rounded-xl bg-amber-500 text-slate-950 font-bold hover:bg-amber-400 transition-all cursor-pointer"
+            >
+              <Play className="w-3 h-3 fill-slate-950" />
+              <span>Resume Session</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Change Password Modal */}
+      {isChangePasswordModalOpen && (
+        <div className="fixed inset-0 z-[99990] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="glass-panel p-6 sm:p-8 rounded-3xl max-w-md w-full space-y-5 border-cyan-500/40 shadow-[0_0_50px_rgba(6,182,212,0.2)]">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-white font-display font-bold">
+                <KeyRound className="w-5 h-5 text-cyan-400" />
+                <span>Change Master Admin Password</span>
+              </div>
               <button
-                onClick={handleFacultyLogout}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-mono bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 transition-all cursor-pointer"
-                title="Log out of Faculty Session"
+                onClick={() => setIsChangePasswordModalOpen(false)}
+                className="p-1 rounded-xl bg-slate-900 text-slate-400 hover:text-white"
               >
-                <LogOut className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Logout</span>
+                <X className="w-5 h-5" />
               </button>
             </div>
-          )}
+
+            {passwordError && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-mono">
+                {passwordError}
+              </div>
+            )}
+
+            {passwordSuccess && (
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-mono font-bold">
+                {passwordSuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleChangePasswordSubmit} className="space-y-4 text-xs font-mono">
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-semibold block">Current Master Password</label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="Enter current password..."
+                  required
+                  className="w-full px-4 py-3 rounded-xl glass-input text-slate-200"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-semibold block">New Master Password (Min 8 chars)</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter new master password..."
+                  required
+                  className="w-full px-4 py-3 rounded-xl glass-input text-slate-200"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsChangePasswordModalOpen(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-900 text-slate-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 font-bold text-white shadow-[0_0_20px_rgba(6,182,212,0.4)]"
+                >
+                  {isSubmitting ? 'Updating...' : 'Update Password'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-      </div>
-    </header>
+      )}
+    </>
   );
 }

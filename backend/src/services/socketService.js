@@ -1,5 +1,7 @@
 const os = require('os');
 const { encryptToken } = require('./cryptoService');
+const Event = require('../models/Event');
+const Attendance = require('../models/Attendance');
 
 function getLocalNetworkIp() {
   if (process.env.SERVER_IP) return process.env.SERVER_IP;
@@ -10,9 +12,6 @@ function getLocalNetworkIp() {
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]) {
       if (iface.family === 'IPv4' && !iface.internal) {
-        if (iface.address.startsWith('10.70.41.')) {
-          return iface.address;
-        }
         if (iface.address.startsWith('10.')) {
           preferredIp = iface.address;
         }
@@ -22,57 +21,39 @@ function getLocalNetworkIp() {
       }
     }
   }
-  return wifiIp || preferredIp || '10.70.41.236';
+  return wifiIp || preferredIp || '127.0.0.1';
 }
 
 const activeNetworkIp = getLocalNetworkIp();
 const frontendPort = 5173;
 
-// Active sessions Map tracking multi-stop status ('active' | 'paused' | 'ended')
+// Active Sessions Map tracking multi-lab isolation by sessionId
+// Key: sessionId (e.g. 'LAB101-X7K9')
 const activeSessions = new Map();
 
 function initSocketService(io) {
-  if (!activeSessions.has('CS101-LECTURE')) {
-    activeSessions.set('CS101-LECTURE', {
-      eventId: 'CS101-LECTURE',
-      eventName: 'CS101: Data Structures & Algorithms',
-      latitude: 28.6139,
-      longitude: 77.2090,
-      allowedRadiusMeters: 50,
-      tokenValiditySeconds: 60,
-      currentCountdown: 60,
-      currentToken: null,
-      qrUrl: null,
-      tokenCreatedAt: Date.now(),
-      status: 'paused', // Default idle until faculty clicks "Start Session"
-      isEnded: false,
-      customFields: {
-        requireMobileNumber: false,
-      },
-    });
-  }
-
   // Master timer interval running every second to count down and rotate tokens smoothly
   setInterval(() => {
-    activeSessions.forEach((session, eventId) => {
-      if (session.status !== 'active') return;
+    activeSessions.forEach((session, sessionId) => {
+      if (session.status !== 'ACTIVE') return;
 
       session.currentCountdown -= 1;
 
-      io.to(`event:${eventId}`).emit('qr-tick', {
-        eventId,
+      io.to(`session:${sessionId}`).emit('qr-tick', {
+        sessionId,
         remainingSeconds: session.currentCountdown,
         totalSeconds: session.tokenValiditySeconds,
         currentToken: session.currentToken,
+        previousToken: session.previousToken,
         qrUrl: session.qrUrl,
         createdAt: session.tokenCreatedAt,
         status: session.status,
-        isEnded: false,
+        allowedRadiusMeters: session.allowedRadiusMeters,
         customFields: session.customFields,
       });
 
       if (session.currentCountdown <= 0) {
-        rotateToken(io, eventId);
+        rotateToken(io, sessionId);
       }
     });
   }, 1000);
@@ -80,58 +61,119 @@ function initSocketService(io) {
   io.on('connection', (socket) => {
     console.log(`[Socket.IO] Client connected: ${socket.id}`);
 
-    socket.on('join-event', (data) => {
-      const eventId = typeof data === 'string' ? data : data?.eventId || 'CS101-LECTURE';
-      socket.join(`event:${eventId}`);
+    // Join isolated session room
+    socket.on('join-session', async (data) => {
+      const sessionId = typeof data === 'string' ? data.toUpperCase() : (data?.sessionId || 'LAB101-X7K9').toUpperCase();
+      socket.join(`session:${sessionId}`);
+      console.log(`[Socket.IO] Socket ${socket.id} joined room: session:${sessionId}`);
 
-      let session = activeSessions.get(eventId);
+      let session = activeSessions.get(sessionId);
+
+      // If not in memory, try loading from MongoDB
+      if (!session) {
+        try {
+          const dbEvent = await Event.findOne({ sessionId });
+          if (dbEvent) {
+            session = {
+              sessionId: dbEvent.sessionId,
+              labIdentifier: dbEvent.labIdentifier,
+              title: dbEvent.title,
+              proctorName: dbEvent.proctorName,
+              latitude: 28.6139,
+              longitude: 77.2090,
+              allowedRadiusMeters: dbEvent.allowedRadiusMeters || 50,
+              tokenValiditySeconds: 60,
+              currentCountdown: 60,
+              currentToken: null,
+              previousToken: null,
+              qrUrl: null,
+              tokenCreatedAt: Date.now(),
+              status: dbEvent.status || 'PAUSED',
+              customFields: dbEvent.customFields || { requireMobileNumber: false, requireWifiVerification: false },
+            };
+            activeSessions.set(sessionId, session);
+          }
+        } catch (e) {
+          console.warn('[Socket.IO] Error loading session from DB:', e);
+        }
+      }
+
+      // Default fallback if still missing
       if (!session) {
         session = {
-          eventId,
-          eventName: data?.eventName || `Event ${eventId}`,
-          latitude: data?.latitude ?? 28.6139,
-          longitude: data?.longitude ?? 77.2090,
-          allowedRadiusMeters: data?.allowedRadiusMeters ?? 50,
+          sessionId,
+          labIdentifier: 'Lab 101',
+          title: 'CS101: Data Structures & Algorithms',
+          proctorName: 'Admin In-Charge',
+          latitude: 28.6139,
+          longitude: 77.2090,
+          allowedRadiusMeters: 50,
           tokenValiditySeconds: 60,
           currentCountdown: 60,
           currentToken: null,
+          previousToken: null,
           qrUrl: null,
           tokenCreatedAt: Date.now(),
-          status: 'paused',
-          isEnded: false,
-          customFields: data?.customFields || { requireMobileNumber: false },
+          status: 'PAUSED',
+          customFields: { requireMobileNumber: false, requireWifiVerification: false },
         };
-        activeSessions.set(eventId, session);
+        activeSessions.set(sessionId, session);
       }
 
       socket.emit('qr-update', {
-        eventId: session.eventId,
+        sessionId: session.sessionId,
+        labIdentifier: session.labIdentifier,
+        title: session.title,
+        proctorName: session.proctorName,
         token: session.currentToken,
+        previousToken: session.previousToken,
         qrUrl: session.qrUrl,
         remainingSeconds: session.currentCountdown,
         totalSeconds: session.tokenValiditySeconds,
         createdAt: session.tokenCreatedAt,
-        latitude: session.latitude,
-        longitude: session.longitude,
         allowedRadiusMeters: session.allowedRadiusMeters,
         status: session.status,
-        isEnded: session.status !== 'active',
         customFields: session.customFields,
       });
     });
 
-    socket.on('start-session', ({ eventId }) => {
-      const targetId = eventId || 'CS101-LECTURE';
+    // Backward compatibility alias for join-event
+    socket.on('join-event', (data) => {
+      const sid = typeof data === 'string' ? data : data?.eventId || data?.sessionId || 'CS101-LECTURE';
+      socket.emit('join-session', { sessionId: sid });
+    });
+
+    // Admin Geofence Radius Slider Update
+    socket.on('update-geofence-radius', ({ sessionId, allowedRadiusMeters }) => {
+      const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
+      const radius = Number(allowedRadiusMeters) || 50;
+
+      let session = activeSessions.get(targetId);
+      if (session) {
+        session.allowedRadiusMeters = radius;
+      }
+
+      // Also persist to DB in background
+      Event.updateOne({ sessionId: targetId }, { allowedRadiusMeters: radius }).catch(() => {});
+
+      io.to(`session:${targetId}`).emit('geofence_updated', {
+        sessionId: targetId,
+        allowedRadiusMeters: radius,
+      });
+    });
+
+    socket.on('start-session', ({ sessionId }) => {
+      const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
       startSession(io, targetId);
     });
 
-    socket.on('end-session', ({ eventId }) => {
-      const targetId = eventId || 'CS101-LECTURE';
+    socket.on('pause-session', ({ sessionId }) => {
+      const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
       pauseSession(io, targetId);
     });
 
-    socket.on('force-rotate-qr', ({ eventId }) => {
-      const targetId = eventId || 'CS101-LECTURE';
+    socket.on('force-rotate-qr', ({ sessionId }) => {
+      const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
       rotateToken(io, targetId);
     });
 
@@ -141,80 +183,107 @@ function initSocketService(io) {
   });
 }
 
-function startSession(io, eventId) {
-  let session = activeSessions.get(eventId);
+function startSession(io, sessionId) {
+  let session = activeSessions.get(sessionId);
   if (!session) return;
 
-  session.status = 'active';
-  session.isEnded = false;
-  console.log(`[Socket.IO] SESSION STARTED / RESUMED for ${eventId}`);
+  session.status = 'ACTIVE';
+  console.log(`[Socket.IO] SESSION STARTED for ${sessionId}`);
 
-  rotateToken(io, eventId);
-}
+  Event.updateOne({ sessionId }, { status: 'ACTIVE' }).catch(() => {});
 
-function pauseSession(io, eventId) {
-  let session = activeSessions.get(eventId);
-  if (!session) return;
-
-  session.status = 'paused';
-  session.isEnded = true;
-  session.currentToken = null;
-  session.qrUrl = null;
-
-  console.log(`[Socket.IO] SESSION PAUSED for ${eventId}`);
-
-  io.to(`event:${eventId}`).emit('session-ended', {
-    eventId,
-    message: 'Session is currently paused by the faculty instructor.',
-    status: 'paused',
-    isEnded: true,
+  io.to(`session:${sessionId}`).emit('session_status_changed', {
+    sessionId,
+    status: 'ACTIVE',
   });
 
-  io.to(`event:${eventId}`).emit('qr-update', {
-    eventId: session.eventId,
+  rotateToken(io, sessionId);
+}
+
+function pauseSession(io, sessionId) {
+  let session = activeSessions.get(sessionId);
+  if (!session) return;
+
+  session.status = 'PAUSED';
+  console.log(`[Socket.IO] SESSION PAUSED for ${sessionId}`);
+
+  Event.updateOne({ sessionId }, { status: 'PAUSED' }).catch(() => {});
+
+  io.to(`session:${sessionId}`).emit('session_status_changed', {
+    sessionId,
+    status: 'PAUSED',
+  });
+
+  io.to(`session:${sessionId}`).emit('qr-update', {
+    sessionId: session.sessionId,
     token: null,
+    previousToken: null,
     qrUrl: null,
     remainingSeconds: 0,
-    status: 'paused',
-    isEnded: true,
+    status: 'PAUSED',
     customFields: session.customFields,
   });
 }
 
-function rotateToken(io, eventId) {
-  let session = activeSessions.get(eventId);
-  if (!session || session.status !== 'active') return;
+function terminateSession(io, sessionId) {
+  let session = activeSessions.get(sessionId);
+  if (session) {
+    session.status = 'TERMINATED';
+    session.currentToken = null;
+    session.previousToken = null;
+    session.qrUrl = null;
+  }
+
+  Event.updateOne({ sessionId }, { status: 'TERMINATED', terminatedAt: new Date() }).catch(() => {});
+
+  io.to(`session:${sessionId}`).emit('session_status_changed', {
+    sessionId,
+    status: 'TERMINATED',
+  });
+
+  io.to(`session:${sessionId}`).emit('qr-update', {
+    sessionId,
+    token: null,
+    previousToken: null,
+    qrUrl: null,
+    remainingSeconds: 0,
+    status: 'TERMINATED',
+  });
+}
+
+function rotateToken(io, sessionId) {
+  let session = activeSessions.get(sessionId);
+  if (!session || session.status !== 'ACTIVE') return;
 
   const now = Date.now();
   const payload = {
-    eventId: session.eventId,
-    eventName: session.eventName,
+    sessionId: session.sessionId,
+    labIdentifier: session.labIdentifier,
     latitude: session.latitude,
     longitude: session.longitude,
     allowedRadiusMeters: session.allowedRadiusMeters,
     timestamp: now,
   };
 
-  const token = encryptToken(payload);
-  session.currentToken = token;
+  // Shift current token to previousToken for 20s Grace Period
+  session.previousToken = session.currentToken;
+  session.currentToken = encryptToken(payload);
   session.currentCountdown = session.tokenValiditySeconds;
   session.tokenCreatedAt = now;
 
-  const hostDomain = process.env.PUBLIC_FRONTEND_URL || `http://${activeNetworkIp}:${frontendPort}`;
-  session.qrUrl = `${hostDomain}/scan?token=${encodeURIComponent(token)}`;
+  const hostDomain = process.env.PUBLIC_FRONTEND_URL || process.env.VITE_APP_URL || `http://${activeNetworkIp}:${frontendPort}`;
+  session.qrUrl = `${hostDomain}/scan?token=${encodeURIComponent(session.currentToken)}`;
 
-  io.to(`event:${eventId}`).emit('qr-update', {
-    eventId: session.eventId,
+  io.to(`session:${sessionId}`).emit('qr-update', {
+    sessionId: session.sessionId,
     token: session.currentToken,
+    previousToken: session.previousToken,
     qrUrl: session.qrUrl,
     remainingSeconds: session.currentCountdown,
     totalSeconds: session.tokenValiditySeconds,
     createdAt: session.tokenCreatedAt,
-    latitude: session.latitude,
-    longitude: session.longitude,
     allowedRadiusMeters: session.allowedRadiusMeters,
-    status: 'active',
-    isEnded: false,
+    status: 'ACTIVE',
     customFields: session.customFields,
   });
 }
@@ -224,7 +293,7 @@ module.exports = {
   rotateToken,
   startSession,
   pauseSession,
-  endSession: pauseSession,
+  terminateSession,
   activeSessions,
   getLocalNetworkIp,
 };

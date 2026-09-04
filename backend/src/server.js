@@ -2,13 +2,14 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const dotenv = require('dotenv');
 
 dotenv.config();
 
 const { connectDB } = require('./config/db');
 const attendanceRoutes = require('./routes/attendanceRoutes');
-const facultyRoutes = require('./routes/facultyRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 const { initSocketService, getLocalNetworkIp } = require('./services/socketService');
 
 const app = express();
@@ -17,29 +18,25 @@ const server = http.createServer(app);
 // Initialize Socket.IO with CORS
 const io = new Server(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    origin: (origin, callback) => callback(null, true),
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true,
   },
 });
 
-// =========================================================================
-// REQUIREMENT 3 & 4: CORS and Body Parser Middleware Placed ABOVE Routes
-// =========================================================================
+// Middleware Configuration
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, curl, postman) or any frontend origin
-      callback(null, true);
-    },
+    origin: (origin, callback) => callback(null, true),
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-faculty-token'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token', 'x-faculty-token'],
   })
 );
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
 // Attach Socket.IO instance to HTTP requests
 app.use((req, res, next) => {
@@ -49,32 +46,33 @@ app.use((req, res, next) => {
 
 // API Routes
 app.use('/api/attendance', attendanceRoutes);
-app.use('/api/faculty', facultyRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/faculty', adminRoutes); // Alias for backward compatibility
 
-// Root Health Check Route
+// Health Check Route
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'online',
-    system: 'Smart QR Attendance System Backend',
+    system: 'ProxyQr Admin Security & Attendance Portal Server',
     serverIp: getLocalNetworkIp(),
     timestamp: new Date(),
   });
 });
 
-// Initialize Socket.IO dynamic QR loops
+// Initialize Socket.IO dynamic session rooms
 initSocketService(io);
 
-// Start Server & Database
+// Start Server & Database Connection
 const PORT = process.env.PORT || 5000;
 const localIp = getLocalNetworkIp();
 
 connectDB().then(() => {
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`====================================================`);
-    console.log(`🚀 Smart QR Attendance Backend Server running!`);
+    console.log(`🚀 ProxyQr Admin Backend Server running!`);
     console.log(`📍 Localhost API:   http://localhost:${PORT}/api/attendance/verify`);
     console.log(`🌐 Network API:     http://${localIp}:${PORT}/api/attendance/verify`);
-    console.log(`🔒 Faculty Auth:    http://${localIp}:${PORT}/api/faculty/auth/google`);
+    console.log(`🔒 Admin Auth:      http://${localIp}:${PORT}/api/admin/auth/login`);
     console.log(`⚡ WebSocket Server: ws://${localIp}:${PORT}`);
     console.log(`====================================================`);
   });

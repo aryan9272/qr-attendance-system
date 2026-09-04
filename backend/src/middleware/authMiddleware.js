@@ -1,89 +1,53 @@
-const crypto = require('crypto');
-const Faculty = require('../models/Faculty');
-
-const JWT_SECRET = process.env.JWT_SECRET || 'faculty-super-secret-key-2026';
+const { verifyJwt } = require('../services/adminAuthService');
 
 /**
- * Creates a signed JWT-like token for faculty authentication
+ * Middleware to verify Admin JWT from HttpOnly cookie, Authorization header, or x-admin-token header
  */
-function createFacultyToken(payload) {
-  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
-  const body = Buffer.from(JSON.stringify({ ...payload, exp: Date.now() + 24 * 60 * 60 * 1000 })).toString('base64url');
-  const signature = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest('base64url');
-  return `${header}.${body}.${signature}`;
-}
-
-/**
- * Verifies a signed faculty token
- */
-function verifyTokenString(token) {
+async function verifyAdminToken(req, res, next) {
   try {
-    if (!token || typeof token !== 'string') return null;
+    let token = null;
 
-    // Requirement 2: Accept development mock testing tokens instantly
-    if (token === 'mock-faculty-jwt-token' || token.startsWith('mock_') || token.startsWith('mock-')) {
-      return {
-        id: 'fac_sggs_2024',
-        name: 'Aryan Kale',
-        email: '2024bit020@sggs.ac.in',
-        role: 'faculty',
-        department: 'Information Technology',
-      };
+    // 1. Check HttpOnly cookie
+    if (req.cookies && req.cookies.admin_session) {
+      token = req.cookies.admin_session;
     }
 
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const [header, body, signature] = parts;
-    const expectedSig = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${body}`).digest('base64url');
-    if (signature !== expectedSig) return null;
-    
-    const parsedBody = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
-    if (parsedBody.exp && parsedBody.exp < Date.now()) return null;
-    return parsedBody;
-  } catch (err) {
-    return null;
-  }
-}
+    // 2. Check Authorization Header (Bearer <token>)
+    if (!token && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
 
-/**
- * Express Middleware: Protects faculty-only administrative endpoints
- */
-function verifyFacultyToken(req, res, next) {
-  try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.startsWith('Bearer ')
-      ? authHeader.split(' ')[1]
-      : req.headers['x-faculty-token'] || req.query.token;
+    // 3. Check x-admin-token / x-faculty-token Header
+    if (!token && req.headers['x-admin-token']) {
+      token = req.headers['x-admin-token'];
+    }
+    if (!token && req.headers['x-faculty-token']) {
+      token = req.headers['x-faculty-token'];
+    }
 
-    if (!token) {
+    if (!token || token === 'null' || token === 'undefined') {
       return res.status(401).json({
         success: false,
-        errorType: 'UNAUTHORIZED_FACULTY',
-        error: 'Access denied! Valid faculty authentication token required.',
+        error: 'UNAUTHORIZED_ACCESS',
+        message: 'Admin authentication required. Please log in to access the Admin Console.',
       });
     }
 
-    const decoded = verifyTokenString(token);
-    if (!decoded || (decoded.role !== 'faculty' && decoded.role !== 'admin')) {
-      return res.status(403).json({
-        success: false,
-        errorType: 'FORBIDDEN_FACULTY',
-        error: 'Invalid or expired faculty session. Please log in as faculty to perform this action.',
-      });
-    }
+    const { decoded, admin } = await verifyJwt(token);
 
-    req.faculty = decoded;
+    req.admin = admin;
+    req.adminSession = decoded;
     next();
   } catch (err) {
-    return res.status(500).json({
+    return res.status(401).json({
       success: false,
-      error: `Faculty auth middleware error: ${err.message}`,
+      error: 'INVALID_SESSION',
+      message: err.message || 'Session expired or invalidated. Please log in again.',
     });
   }
 }
 
 module.exports = {
-  createFacultyToken,
-  verifyTokenString,
-  verifyFacultyToken,
+  verifyAdminToken,
+  verifyFacultyToken: verifyAdminToken, // Backward compatibility alias
 };

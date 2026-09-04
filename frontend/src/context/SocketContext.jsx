@@ -24,9 +24,11 @@ const SocketContext = createContext({
   connected: false,
   qrData: null,
   countdown: 60,
+  currentSessionId: 'LAB101-X7K9',
   backendUrl: PUBLIC_BACKEND_URL,
-  joinEvent: () => {},
+  joinSession: () => {},
   forceRotateQR: () => {},
+  updateGeofenceRadius: () => {},
 });
 
 export const SocketProvider = ({ children }) => {
@@ -34,6 +36,7 @@ export const SocketProvider = ({ children }) => {
   const [connected, setConnected] = useState(false);
   const [qrData, setQrData] = useState(null);
   const [countdown, setCountdown] = useState(60);
+  const [currentSessionId, setCurrentSessionId] = useState('LAB101-X7K9');
   const backendUrl = getBackendUrl();
 
   useEffect(() => {
@@ -42,12 +45,13 @@ export const SocketProvider = ({ children }) => {
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 20,
       reconnectionDelay: 1000,
+      withCredentials: true,
     });
 
     newSocket.on('connect', () => {
       console.log('[Socket.IO Frontend] Connected successfully:', newSocket.id);
       setConnected(true);
-      newSocket.emit('join-event', { eventId: 'CS101-LECTURE' });
+      newSocket.emit('join-session', { sessionId: currentSessionId });
     });
 
     newSocket.on('disconnect', () => {
@@ -56,7 +60,7 @@ export const SocketProvider = ({ children }) => {
     });
 
     newSocket.on('qr-update', (data) => {
-      console.log('[Socket.IO Frontend] QR Token Updated for event:', data.eventId);
+      console.log('[Socket.IO Frontend] QR Token Updated for session:', data.sessionId);
       setQrData(data);
       if (typeof data.remainingSeconds === 'number') {
         setCountdown(data.remainingSeconds);
@@ -67,6 +71,17 @@ export const SocketProvider = ({ children }) => {
       if (typeof data.remainingSeconds === 'number') {
         setCountdown(data.remainingSeconds);
       }
+      if (data.currentToken) {
+        setQrData((prev) => (prev ? { ...prev, ...data } : data));
+      }
+    });
+
+    newSocket.on('geofence_updated', (data) => {
+      setQrData((prev) => (prev ? { ...prev, allowedRadiusMeters: data.allowedRadiusMeters } : prev));
+    });
+
+    newSocket.on('session_status_changed', (data) => {
+      setQrData((prev) => (prev ? { ...prev, status: data.status } : prev));
     });
 
     setSocket(newSocket);
@@ -76,15 +91,25 @@ export const SocketProvider = ({ children }) => {
     };
   }, [backendUrl]);
 
-  const joinEvent = (eventId) => {
+  const joinSession = (sessionId) => {
+    const cleanId = (sessionId || 'LAB101-X7K9').toUpperCase();
+    setCurrentSessionId(cleanId);
     if (socket && connected) {
-      socket.emit('join-event', { eventId });
+      socket.emit('join-session', { sessionId: cleanId });
     }
   };
 
-  const forceRotateQR = (eventId) => {
+  const forceRotateQR = (sessionId) => {
+    const cleanId = (sessionId || currentSessionId).toUpperCase();
     if (socket && connected) {
-      socket.emit('force-rotate-qr', { eventId });
+      socket.emit('force-rotate-qr', { sessionId: cleanId });
+    }
+  };
+
+  const updateGeofenceRadius = (sessionId, allowedRadiusMeters) => {
+    const cleanId = (sessionId || currentSessionId).toUpperCase();
+    if (socket && connected) {
+      socket.emit('update-geofence-radius', { sessionId: cleanId, allowedRadiusMeters });
     }
   };
 
@@ -95,9 +120,12 @@ export const SocketProvider = ({ children }) => {
         connected,
         qrData,
         countdown,
+        currentSessionId,
         backendUrl,
-        joinEvent,
+        joinSession,
+        joinEvent: joinSession, // Backward compatibility alias
         forceRotateQR,
+        updateGeofenceRadius,
       }}
     >
       {children}

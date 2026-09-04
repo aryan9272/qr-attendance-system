@@ -1,18 +1,27 @@
 const express = require('express');
 const router = express.Router();
 const attendanceController = require('../controllers/attendanceController');
-const { verifyFacultyToken } = require('../middleware/authMiddleware');
+const { verifyAdminToken } = require('../middleware/authMiddleware');
 
 // Public Student Endpoints
 router.post('/verify', attendanceController.verifyAttendance);
 router.get('/events', attendanceController.getEvents);
 
-// Protected Faculty Administrative Endpoints
-router.post('/events/start', verifyFacultyToken, attendanceController.startSession);
-router.post('/events/create', verifyFacultyToken, attendanceController.createEvent);
-router.post('/events/end', verifyFacultyToken, attendanceController.endSession);
-router.put('/events/:id', verifyFacultyToken, attendanceController.updateEvent);
-router.delete('/events/:id', verifyFacultyToken, attendanceController.deleteEvent);
-router.get('/stats/:eventId', verifyFacultyToken, attendanceController.getAttendanceStats);
+// Protected Admin Administrative Endpoints
+router.post('/sessions/create', verifyAdminToken, attendanceController.createSession);
+router.post('/sessions/start', verifyAdminToken, attendanceController.startSession);
+router.post('/sessions/pause', verifyAdminToken, attendanceController.pauseSession);
+router.post('/sessions/terminate', verifyAdminToken, attendanceController.terminateSession);
+router.get('/sessions/history', verifyAdminToken, attendanceController.getSessionHistory);
+
+// Roster Management & Overrides
+router.patch('/attendee/:id', verifyAdminToken, attendanceController.updateAttendee);
+router.post('/manual-intake', verifyAdminToken, attendanceController.manualIntake);
+router.get('/stats/:eventId', verifyAdminToken, attendanceController.getAttendanceStats);
+
+// Legacy aliases for backward compatibility
+router.post('/events/start', verifyAdminToken, attendanceController.startSession);
+router.post('/events/create', verifyAdminToken, attendanceController.createSession);
+router.post('/events/end', verifyAdminToken, attendanceController.pauseSession);
 
 module.exports = router;

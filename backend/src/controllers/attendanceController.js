@@ -1,21 +1,34 @@
-const geolib = require('geolib');
-const Attendance = require('../models/Attendance');
-const Event = require('../models/Event');
+const crypto = require('crypto');
 const { decryptToken } = require('../services/cryptoService');
-const { activeSessions, startSession, pauseSession } = require('../services/socketService');
-
-const DEFAULT_TARGET = {
-  latitude: 28.6139,
-  longitude: 77.2090,
-  allowedRadiusMeters: 50,
-};
-
-const inMemoryAttendanceStore = [];
-const customEventsStore = new Map();
+const { activeSessions, startSession, pauseSession, terminateSession, rotateToken } = require('../services/socketService');
+const Event = require('../models/Event');
+const Attendance = require('../models/Attendance');
 
 /**
- * Handles student attendance verification request (Scan -> Authenticate -> Fill Details -> Submit)
- * Endpoint: POST /api/attendance/verify
+ * Generate Unique Session ID: [SanitizedLabCode]-[RandomNanoID]
+ * Example: LAB101-X7K9
+ */
+async function generateUniqueSessionId(labIdentifier) {
+  const cleanLab = (labIdentifier || 'LAB')
+    .toUpperCase()
+    .replace(/[^A-Z0-0]/g, '')
+    .slice(0, 8) || 'LAB';
+
+  let sessionId = '';
+  let exists = true;
+
+  while (exists) {
+    const randomSuffix = crypto.randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+    sessionId = `${cleanLab}-${randomSuffix}`;
+    const found = await Event.findOne({ sessionId });
+    if (!found) exists = false;
+  }
+
+  return sessionId;
+}
+
+/**
+ * Student Attendance Verification Endpoint
  */
 exports.verifyAttendance = async (req, res) => {
   try {
@@ -28,456 +41,484 @@ exports.verifyAttendance = async (req, res) => {
       year,
       branch,
       mobileNumber,
-      customData,
       userLocation,
-      eventId = 'CS101-LECTURE',
+      eventId,
+      sessionId,
+      deviceUuid,
     } = req.body;
 
-    if (!token || !userLocation || !userLocation.latitude || !userLocation.longitude) {
-      return res.status(400).json({
-        success: false,
-        errorType: 'MISSING_PARAMETERS',
-        error: 'Missing required parameters: token, userLocation (latitude, longitude) are mandatory.',
-      });
+    const targetSessionId = (sessionId || eventId || 'CS101-LECTURE').toUpperCase();
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanRegNo = (regNo || studentId || '').trim().toUpperCase();
+    const cleanName = (studentName || '').trim();
+
+    if (!token) {
+      return res.status(400).json({ success: false, errorType: 'MISSING_TOKEN', error: 'Missing security token.' });
     }
 
-    // Universal Email Check (Allows any valid Google Account Domain)
-    if (email) {
-      const cleanEmail = email.trim().toLowerCase();
-      if (!cleanEmail.includes('@') || cleanEmail.length < 5) {
-        return res.status(400).json({
-          success: false,
-          errorType: 'INVALID_EMAIL_FORMAT',
-          error: `Invalid email address format: "${cleanEmail}".`,
-        });
+    if (!cleanRegNo || !cleanName || !cleanEmail) {
+      return res.status(400).json({ success: false, errorType: 'MISSING_FIELDS', error: 'Student Name, Registration No, and Email are required.' });
+    }
+
+    // 1. Check Session State in Memory / Database
+    let session = activeSessions.get(targetSessionId);
+    if (!session) {
+      const dbEvent = await Event.findOne({ sessionId: targetSessionId });
+      if (dbEvent) {
+        session = {
+          sessionId: dbEvent.sessionId,
+          labIdentifier: dbEvent.labIdentifier,
+          title: dbEvent.title,
+          latitude: 28.6139,
+          longitude: 77.2090,
+          allowedRadiusMeters: dbEvent.allowedRadiusMeters || 50,
+          status: dbEvent.status,
+          customFields: dbEvent.customFields,
+        };
+        activeSessions.set(targetSessionId, session);
       }
     }
 
-    const socketSession = activeSessions.get(eventId);
-    let dbEvent = await Event.findOne({ eventId }).catch(() => null);
-
-    const isSessionActive = socketSession
-      ? socketSession.status === 'active'
-      : (dbEvent && dbEvent.status === 'active');
-
-    if (!isSessionActive) {
+    if (!session || session.status === 'PAUSED' || session.status === 'TERMINATED') {
       return res.status(403).json({
         success: false,
         errorType: 'SESSION_PAUSED',
-        error: 'Session is currently paused by the faculty instructor. Submissions are temporarily blocked.',
+        error: 'Attendance session is currently paused or ended by the Admin.',
       });
     }
 
-    const requireMobile = socketSession?.customFields?.requireMobileNumber || dbEvent?.customFields?.requireMobileNumber;
-    if (requireMobile && (!mobileNumber || !mobileNumber.trim())) {
+    // 2. Decrypt & Validate Dynamic AES Token (Dual Token 60s + 20s Grace Window)
+    let tokenPayload = null;
+    try {
+      tokenPayload = decryptToken(token);
+    } catch (e) {
       return res.status(400).json({
         success: false,
-        errorType: 'MISSING_CUSTOM_FIELD',
-        error: 'Mobile Number is required for this session.',
+        errorType: 'EXPIRED_TOKEN',
+        error: 'Dynamic QR token has expired or is invalid. Please scan the current live QR code on the projector.',
       });
     }
 
-    const decryptionResult = decryptToken(token, 60);
-
-    if (!decryptionResult.isValid) {
+    if (!tokenPayload || (tokenPayload.sessionId && tokenPayload.sessionId.toUpperCase() !== targetSessionId && tokenPayload.eventId !== targetSessionId)) {
       return res.status(400).json({
         success: false,
-        errorType: 'EXPIRED_OR_INVALID_TOKEN',
-        error: decryptionResult.error,
-        ageSeconds: decryptionResult.ageSeconds,
+        errorType: 'INVALID_SESSION_TOKEN',
+        error: 'QR code does not belong to this active session.',
       });
     }
 
-    const { payload } = decryptionResult;
-
-    const targetCoords = {
-      latitude: payload.latitude || dbEvent?.latitude || DEFAULT_TARGET.latitude,
-      longitude: payload.longitude || dbEvent?.longitude || DEFAULT_TARGET.longitude,
-    };
-
-    const maxRadiusMeters = payload.allowedRadiusMeters || dbEvent?.allowedRadiusMeters || DEFAULT_TARGET.allowedRadiusMeters;
-
-    const studentCoords = {
-      latitude: Number(userLocation.latitude),
-      longitude: Number(userLocation.longitude),
-    };
-
-    const distanceFromTarget = geolib.getDistance(studentCoords, targetCoords);
-    const isWithinGeofence = distanceFromTarget <= maxRadiusMeters;
-
-    const userId = (regNo || studentId || email || 'UNKNOWN_STUDENT').trim();
-    const displayName = (studentName || 'Student').trim();
-
-    if (!isWithinGeofence) {
-      return res.status(403).json({
+    // 20s Grace Period Check (Total 80 seconds max)
+    const tokenAgeMs = Date.now() - (tokenPayload.timestamp || 0);
+    if (tokenAgeMs > 80 * 1000) {
+      return res.status(400).json({
         success: false,
-        errorType: 'GEOFENCE_VIOLATION',
-        error: `Geofence check failed! You are ${distanceFromTarget} meters away from target classroom coordinates (Maximum allowed radius is ${maxRadiusMeters} meters).`,
-        distanceFromTargetMeters: distanceFromTarget,
-        allowedRadiusMeters: maxRadiusMeters,
-        userLocation: studentCoords,
-        targetLocation: targetCoords,
+        errorType: 'EXPIRED_TOKEN',
+        error: 'Dynamic QR token expired over 20s ago. Scan the fresh projector QR code.',
       });
     }
 
-    const attendanceRecord = {
-      user: userId,
-      userName: displayName,
-      email: email || '',
-      regNo: regNo || userId,
+    // 3. Adaptive Geofence Boundary Calculation: Boundary = Admin Radius + min(coords.accuracy, 30)
+    const adminRadius = session.allowedRadiusMeters || 50;
+    const clientAccuracy = Number(req.body.accuracy) || 5;
+    const adaptiveAllowedRadius = adminRadius + Math.min(clientAccuracy, 30);
+
+    const targetLat = session.latitude || 28.6139;
+    const targetLng = session.longitude || 77.2090;
+
+    const studentLat = userLocation?.latitude ?? 28.6139;
+    const studentLng = userLocation?.longitude ?? 77.2090;
+
+    // Haversine Distance Calculation (Meters)
+    const toRad = (val) => (val * Math.PI) / 180;
+    const R = 6371000; // Earth radius in meters
+    const dLat = toRad(studentLat - targetLat);
+    const dLng = toRad(studentLng - targetLng);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(targetLat)) * Math.cos(toRad(studentLat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distanceMeters = Math.round(R * c);
+
+    if (distanceMeters > adaptiveAllowedRadius) {
+      return res.status(400).json({
+        success: false,
+        errorType: 'OUT_OF_GEOFENCE',
+        error: `Location violation: You are ${distanceMeters}m away from the classroom (Allowed boundary: ${adaptiveAllowedRadius}m).`,
+        distanceFromTargetMeters: distanceMeters,
+        allowedRadiusMeters: adaptiveAllowedRadius,
+      });
+    }
+
+    // 4. Anti-Proxy Lock: Check Duplicate Student Record or Rapid IP Submission
+    const existingStudent = await Attendance.findOne({
+      sessionId: targetSessionId,
+      $or: [{ regNo: cleanRegNo }, { email: cleanEmail }],
+    });
+
+    if (existingStudent) {
+      return res.status(409).json({
+        success: false,
+        errorType: 'ALREADY_SUBMITTED',
+        error: `Attendance already recorded for ${cleanRegNo} (${cleanEmail}) in this session.`,
+      });
+    }
+
+    // Check Rapid IP / Device Proxy Sentinel
+    const clientIp = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
+    const userAgent = req.headers['user-agent'] || '';
+
+    const recentIpRecord = await Attendance.findOne({
+      sessionId: targetSessionId,
+      clientIp,
+      timestamp: { $gte: new Date(Date.now() - 5000) }, // Within last 5 seconds
+    });
+
+    let verificationMode = 'GPS_VERIFIED';
+    if (recentIpRecord) {
+      verificationMode = 'SUSPICIOUS_PROXY';
+      console.warn(`[Anti-Proxy Sentinel] Flagged SUSPICIOUS_PROXY for ${cleanRegNo} from IP ${clientIp}`);
+    }
+
+    // 5. Save Record to Database
+    const attendanceDoc = await Attendance.create({
+      sessionId: targetSessionId,
+      studentId: cleanRegNo,
+      regNo: cleanRegNo,
+      studentName: cleanName,
+      email: cleanEmail,
       year: year || '',
       branch: branch || '',
       mobileNumber: mobileNumber || '',
-      customData: customData || {},
-      event: eventId,
-      location: studentCoords,
-      distanceFromTargetMeters: distanceFromTarget,
-      status: 'VERIFIED',
+      verificationMode,
+      distanceFromTargetMeters: distanceMeters,
+      userLocation: { latitude: studentLat, longitude: studentLng },
+      deviceUuid: deviceUuid || '',
+      clientIp,
+      userAgent,
       timestamp: new Date(),
-    };
+    });
 
-    try {
-      const newAttendance = new Attendance(attendanceRecord);
-      await newAttendance.save();
-    } catch (dbErr) {
-      if (dbErr.code === 11000) {
-        return res.status(409).json({
-          success: false,
-          errorType: 'DUPLICATE_ENTRY',
-          error: `Attendance already marked! Student ID "${userId}" has already submitted attendance for event "${eventId}".`,
-        });
-      }
-      
-      const duplicateInMemory = inMemoryAttendanceStore.find(
-        (rec) => rec.user === userId && rec.event === eventId
-      );
-      if (duplicateInMemory) {
-        return res.status(409).json({
-          success: false,
-          errorType: 'DUPLICATE_ENTRY',
-          error: `Attendance already marked! Student ID "${userId}" has already submitted attendance for event "${eventId}".`,
-        });
-      }
-      inMemoryAttendanceStore.push(attendanceRecord);
-    }
-
+    // 6. Broadcast Real-Time Attendee Event to Active Session Room
     if (req.io) {
-      req.io.to(`event:${eventId}`).emit('attendance-marked', {
-        eventId,
-        attendance: attendanceRecord,
+      req.io.to(`session:${targetSessionId}`).emit('new_attendee', {
+        sessionId: targetSessionId,
+        record: attendanceDoc,
       });
     }
 
     return res.status(200).json({
       success: true,
-      message: 'Attendance successfully verified and recorded!',
-      details: {
-        eventId,
-        userId,
-        studentName: displayName,
-        email: email || '',
-        regNo: regNo || userId,
-        year: year || '',
-        branch: branch || '',
-        mobileNumber: mobileNumber || '',
-        distanceFromTargetMeters: distanceFromTarget,
-        allowedRadiusMeters: maxRadiusMeters,
-        timestamp: attendanceRecord.timestamp,
-        tokenAgeSeconds: decryptionResult.ageSeconds,
-      },
+      message: 'Attendance verified and marked successfully!',
+      attendance: attendanceDoc,
     });
   } catch (err) {
-    console.error('Verify Attendance Exception:', err);
+    console.error('[Attendance Verification Error]:', err);
     return res.status(500).json({
       success: false,
       errorType: 'SERVER_ERROR',
-      error: `An error occurred during verification: ${err.message}`,
+      error: `Server error verifying attendance: ${err.message}`,
     });
   }
 };
 
 /**
- * Faculty Start Session
- * Endpoint: POST /api/attendance/events/start
+ * Admin: Create New ProxyQr Session (Auto-Generated Session ID)
  */
-exports.startSession = async (req, res) => {
+exports.createSession = async (req, res) => {
   try {
-    const { eventId } = req.body;
-    if (!eventId) {
-      return res.status(400).json({ success: false, error: 'eventId is required' });
+    const { labIdentifier, title, proctorName, customFields } = req.body;
+
+    if (!labIdentifier || !title) {
+      return res.status(400).json({ success: false, message: 'Lab Identifier and Session Title are required.' });
     }
 
-    const targetId = eventId.trim().toUpperCase();
+    const sessionId = await generateUniqueSessionId(labIdentifier);
 
-    await Event.findOneAndUpdate(
-      { eventId: targetId },
-      { status: 'active', isEnded: false }
-    ).catch(() => null);
-
-    startSession(req.io, targetId);
-
-    return res.status(200).json({
-      success: true,
-      message: `Session "${targetId}" started successfully!`,
-      eventId: targetId,
-      status: 'active',
-    });
-  } catch (err) {
-    return res.status(500).json({
-      success: false,
-      error: `Failed to start session: ${err.message}`,
-    });
-  }
-};
-
-/**
- * Faculty Stop / Pause Session
- * Endpoint: POST /api/attendance/events/end
- */
-exports.endSession = async (req, res) => {
-  try {
-    const { eventId } = req.body;
-    if (!eventId) {
-      return res.status(400).json({ success: false, error: 'eventId is required' });
-    }
-
-    const targetId = eventId.trim().toUpperCase();
-
-    await Event.findOneAndUpdate(
-      { eventId: targetId },
-      { status: 'paused', isEnded: true }
-    ).catch(() => null);
-
-    pauseSession(req.io, targetId);
-
-    return res.status(200).json({
-      success: true,
-      message: `Session "${targetId}" has been paused.`,
-      eventId: targetId,
-      status: 'paused',
-    });
-  } catch (err) {
-    return res.status(500).json({
-      success: false,
-      error: `Failed to pause session: ${err.message}`,
-    });
-  }
-};
-
-/**
- * Faculty Create New Session
- * Endpoint: POST /api/attendance/events/create
- */
-exports.createEvent = async (req, res) => {
-  try {
-    const {
-      eventId,
-      title,
-      description,
-      facultyName,
-      latitude = DEFAULT_TARGET.latitude,
-      longitude = DEFAULT_TARGET.longitude,
-      allowedRadiusMeters = 50,
-      customFields = { requireMobileNumber: false },
-    } = req.body;
-
-    if (!eventId || !title) {
-      return res.status(400).json({
-        success: false,
-        error: 'eventId and title are required fields.',
-      });
-    }
-
-    const eventData = {
-      eventId: eventId.trim().toUpperCase(),
+    const eventDoc = await Event.create({
+      sessionId,
+      labIdentifier: labIdentifier.trim(),
       title: title.trim(),
-      description: description || '',
-      facultyName: facultyName || 'Faculty Instructor',
-      latitude: Number(latitude),
-      longitude: Number(longitude),
-      allowedRadiusMeters: Number(allowedRadiusMeters),
-      status: 'paused',
-      isEnded: true,
-      customFields: {
-        requireMobileNumber: Boolean(customFields?.requireMobileNumber),
-      },
-    };
+      proctorName: (proctorName || 'Admin In-Charge').trim(),
+      status: 'PAUSED',
+      allowedRadiusMeters: 50,
+      customFields: customFields || { requireMobileNumber: false, requireWifiVerification: false },
+    });
 
-    try {
-      const newEvent = new Event(eventData);
-      await newEvent.save();
-    } catch (dbErr) {
-      customEventsStore.set(eventData.eventId, eventData);
-    }
-
-    activeSessions.set(eventData.eventId, {
-      ...eventData,
-      eventName: eventData.title,
+    // Initialize in Socket.IO memory
+    activeSessions.set(sessionId, {
+      sessionId: eventDoc.sessionId,
+      labIdentifier: eventDoc.labIdentifier,
+      title: eventDoc.title,
+      proctorName: eventDoc.proctorName,
+      latitude: 28.6139,
+      longitude: 77.2090,
+      allowedRadiusMeters: 50,
       tokenValiditySeconds: 60,
       currentCountdown: 60,
       currentToken: null,
+      previousToken: null,
       qrUrl: null,
       tokenCreatedAt: Date.now(),
+      status: 'PAUSED',
+      customFields: eventDoc.customFields,
     });
 
     return res.status(201).json({
       success: true,
-      message: 'New faculty session created successfully!',
-      event: eventData,
+      message: 'Session created successfully.',
+      session: eventDoc,
     });
   } catch (err) {
-    return res.status(500).json({
-      success: false,
-      error: `Failed to create session: ${err.message}`,
-    });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
 /**
- * Requirement 3: Faculty Edit / Update Session Metadata
- * Endpoint: PUT /api/attendance/events/:id
+ * Admin: Start / Resume Session
  */
-exports.updateEvent = async (req, res) => {
+exports.startSession = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
+
+    startSession(req.io, targetId);
+
+    return res.json({ success: true, message: `Session ${targetId} started/resumed.` });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * Admin: Pause Session
+ */
+exports.pauseSession = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
+
+    pauseSession(req.io, targetId);
+
+    return res.json({ success: true, message: `Session ${targetId} paused.` });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * Admin: Terminate Session (Double-Check Permanently End)
+ */
+exports.terminateSession = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
+
+    terminateSession(req.io, targetId);
+
+    return res.json({ success: true, message: `Session ${targetId} permanently terminated.` });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * Admin: Emergency Manual Intake (Zero-Roster Fallback)
+ */
+exports.manualIntake = async (req, res) => {
+  try {
+    const { sessionId, studentName, regNo, email, year, branch, mobileNumber, overrideReason } = req.body;
+
+    const targetSessionId = (sessionId || 'LAB101-X7K9').toUpperCase();
+    const cleanRegNo = (regNo || '').trim().toUpperCase();
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanName = (studentName || '').trim();
+
+    if (!cleanRegNo || !cleanName || !cleanEmail || !overrideReason) {
+      return res.status(400).json({ success: false, message: 'Full Name, PRN, Email, and Override Reason are required.' });
+    }
+
+    // Check Duplicate Collision
+    const existing = await Attendance.findOne({
+      sessionId: targetSessionId,
+      $or: [{ regNo: cleanRegNo }, { email: cleanEmail }],
+    });
+
+    if (existing) {
+      return res.status(409).json({ success: false, message: `Attendance already recorded for ${cleanRegNo}.` });
+    }
+
+    const attendanceDoc = await Attendance.create({
+      sessionId: targetSessionId,
+      studentId: cleanRegNo,
+      regNo: cleanRegNo,
+      studentName: cleanName,
+      email: cleanEmail,
+      year: year || '',
+      branch: branch || '',
+      mobileNumber: mobileNumber || '',
+      verificationMode: 'ADMIN_MANUAL_OVERRIDE',
+      overrideReason: overrideReason.trim(),
+      editedBy: req.admin?.email || 'Admin',
+      editedAt: new Date(),
+      distanceFromTargetMeters: 0,
+      timestamp: new Date(),
+    });
+
+    if (req.io) {
+      req.io.to(`session:${targetSessionId}`).emit('new_attendee', {
+        sessionId: targetSessionId,
+        record: attendanceDoc,
+      });
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Manual attendance override created successfully.',
+      attendance: attendanceDoc,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * Admin: Edit Student Roster Record with Mandatory Reason
+ */
+exports.updateAttendee = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, facultyName, customFields } = req.body;
+    const { studentName, regNo, email, year, branch, mobileNumber, editReason } = req.body;
 
-    if (!id) {
-      return res.status(400).json({ success: false, error: 'Session Event ID is required.' });
+    if (!editReason || !editReason.trim()) {
+      return res.status(400).json({ success: false, message: 'Mandatory Edit Reason is required.' });
     }
 
-    const targetId = id.trim().toUpperCase();
-
-    const updateFields = {};
-    if (title) updateFields.title = title.trim();
-    if (facultyName) updateFields.facultyName = facultyName.trim();
-    if (customFields) {
-      updateFields.customFields = {
-        requireMobileNumber: Boolean(customFields.requireMobileNumber),
-      };
+    const record = await Attendance.findById(id);
+    if (!record) {
+      return res.status(404).json({ success: false, message: 'Attendee record not found.' });
     }
 
-    let updatedEvent = await Event.findOneAndUpdate(
-      { eventId: targetId },
-      { $set: updateFields },
-      { new: true }
-    ).catch(() => null);
+    // Save previous values in audit history
+    const previousValues = {
+      studentName: record.studentName,
+      regNo: record.regNo,
+      email: record.email,
+      year: record.year,
+      branch: record.branch,
+      mobileNumber: record.mobileNumber,
+    };
 
-    if (!updatedEvent) {
-      let memoryEvent = customEventsStore.get(targetId) || { eventId: targetId };
-      memoryEvent = { ...memoryEvent, ...updateFields };
-      customEventsStore.set(targetId, memoryEvent);
-      updatedEvent = memoryEvent;
+    if (studentName) record.studentName = studentName.trim();
+    if (regNo) record.regNo = regNo.trim().toUpperCase();
+    if (email) record.email = email.trim().toLowerCase();
+    if (year !== undefined) record.year = year;
+    if (branch !== undefined) record.branch = branch;
+    if (mobileNumber !== undefined) record.mobileNumber = mobileNumber;
+
+    record.editedBy = req.admin?.email || 'Admin';
+    record.editedAt = new Date();
+    record.editHistory.push({
+      previousValues,
+      reason: editReason.trim(),
+      editedAt: new Date(),
+    });
+
+    await record.save();
+
+    if (req.io) {
+      req.io.to(`session:${record.sessionId}`).emit('attendee_updated', {
+        sessionId: record.sessionId,
+        record,
+      });
     }
 
-    // Update active socket session state
-    const socketSession = activeSessions.get(targetId);
-    if (socketSession) {
-      if (title) socketSession.eventName = title.trim();
-      if (customFields) socketSession.customFields = updateFields.customFields;
-    }
-
-    return res.status(200).json({
+    return res.json({
       success: true,
-      message: `Session "${targetId}" updated successfully!`,
-      event: updatedEvent,
+      message: 'Attendee record updated successfully.',
+      record,
     });
   } catch (err) {
-    return res.status(500).json({
-      success: false,
-      error: `Failed to update session: ${err.message}`,
-    });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
 /**
- * Requirement 3: Faculty Delete / Purge Session
- * Endpoint: DELETE /api/attendance/events/:id
+ * Admin: Get Active / Terminated Sessions History
  */
-exports.deleteEvent = async (req, res) => {
+exports.getSessionHistory = async (req, res) => {
   try {
-    const { id } = req.params;
-    if (!id) {
-      return res.status(400).json({ success: false, error: 'Session Event ID is required.' });
-    }
+    const sessions = await Event.find().sort({ createdAt: -1 });
 
-    const targetId = id.trim().toUpperCase();
+    const sessionStats = await Promise.all(
+      sessions.map(async (sess) => {
+        const totalAttendees = await Attendance.countDocuments({ sessionId: sess.sessionId });
+        const manualOverrides = await Attendance.countDocuments({
+          sessionId: sess.sessionId,
+          verificationMode: 'ADMIN_MANUAL_OVERRIDE',
+        });
+        return {
+          ...sess.toObject(),
+          totalAttendees,
+          manualOverrides,
+        };
+      })
+    );
 
-    // Purge from MongoDB
-    await Event.deleteOne({ eventId: targetId }).catch(() => null);
-
-    // Purge from in-memory maps & socket session map
-    customEventsStore.delete(targetId);
-    activeSessions.delete(targetId);
-
-    return res.status(200).json({
+    return res.json({
       success: true,
-      message: `Session "${targetId}" deleted successfully.`,
-      eventId: targetId,
+      sessions: sessionStats,
     });
   } catch (err) {
-    return res.status(500).json({
-      success: false,
-      error: `Failed to delete session: ${err.message}`,
-    });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
 /**
- * Fetch available events
- * Endpoint: GET /api/attendance/events
+ * Public / Admin: Get Events List
  */
 exports.getEvents = async (req, res) => {
   try {
-    let events = await Event.find().sort({ createdAt: -1 }).catch(() => []);
-    if (!events || events.length === 0) {
+    let events = await Event.find({ status: { $ne: 'TERMINATED' } }).sort({ createdAt: -1 });
+
+    if (events.length === 0) {
       events = [
         {
-          eventId: 'CS101-LECTURE',
+          sessionId: 'LAB101-X7K9',
+          labIdentifier: 'Lab 101',
           title: 'CS101: Data Structures & Algorithms',
-          latitude: DEFAULT_TARGET.latitude,
-          longitude: DEFAULT_TARGET.longitude,
-          allowedRadiusMeters: DEFAULT_TARGET.allowedRadiusMeters,
-          status: 'paused',
-          isEnded: true,
+          proctorName: 'Admin In-Charge',
+          status: 'PAUSED',
+          allowedRadiusMeters: 50,
           customFields: { requireMobileNumber: false },
         },
-        ...Array.from(customEventsStore.values()),
       ];
     }
-    return res.status(200).json({ success: true, events });
+
+    return res.json({ success: true, events });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
 /**
- * Fetch session stats & recent verifications
- * Endpoint: GET /api/attendance/stats/:eventId
+ * Admin: Get Attendance Stats for Session
  */
 exports.getAttendanceStats = async (req, res) => {
   try {
     const { eventId } = req.params;
+    const targetSessionId = (eventId || 'CS101-LECTURE').toUpperCase();
 
-    let dbRecords = await Attendance.find({ event: eventId, status: 'VERIFIED' })
-      .sort({ timestamp: -1 })
-      .catch(() => []);
+    const count = await Attendance.countDocuments({ sessionId: targetSessionId });
+    const recent = await Attendance.find({ sessionId: targetSessionId }).sort({ timestamp: -1 }).limit(200);
 
-    if (!dbRecords || dbRecords.length === 0) {
-      dbRecords = inMemoryAttendanceStore.filter(
-        (rec) => rec.event === eventId && rec.status === 'VERIFIED'
-      );
-    }
-
-    return res.status(200).json({
+    return res.json({
       success: true,
       stats: {
-        eventId,
-        count: dbRecords.length,
-        recent: dbRecords,
+        count,
+        recent,
       },
     });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };

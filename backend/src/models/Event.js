@@ -1,11 +1,18 @@
 const mongoose = require('mongoose');
 
-const eventSchema = new mongoose.Schema(
+const EventSchema = new mongoose.Schema(
   {
-    eventId: {
+    sessionId: {
       type: String,
       required: true,
       unique: true,
+      uppercase: true,
+      trim: true,
+      index: true,
+    },
+    labIdentifier: {
+      type: String,
+      required: true,
       trim: true,
     },
     title: {
@@ -13,42 +20,27 @@ const eventSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-    description: {
+    proctorName: {
       type: String,
-      default: '',
+      default: 'Admin In-Charge',
+      trim: true,
     },
-    facultyName: {
+    status: {
       type: String,
-      default: 'Faculty Instructor',
-    },
-    latitude: {
-      type: Number,
-      required: true,
-      default: 28.6139,
-    },
-    longitude: {
-      type: Number,
-      required: true,
-      default: 77.2090,
+      enum: ['ACTIVE', 'PAUSED', 'TERMINATED'],
+      default: 'PAUSED',
     },
     allowedRadiusMeters: {
       type: Number,
       default: 50,
     },
-    status: {
-      type: String,
-      enum: ['active', 'paused', 'ended'],
-      default: 'paused',
-    },
-    isEnded: {
-      type: Boolean,
-      default: false,
-    },
     customFields: {
-      requireMobileNumber: {
-        type: Boolean,
-        default: false,
-      },
+      requireMobileNumber: { type: Boolean, default: false },
+      requireWifiVerification: { type: Boolean, default: false },
+    },
+    terminatedAt: {
+      type: Date,
+      default: null,
     },
   },
   {
@@ -56,4 +48,4 @@ const eventSchema = new mongoose.Schema(
   }
 );
 
-module.exports = mongoose.model('Event', eventSchema);
+module.exports = mongoose.model('Event', EventSchema);
