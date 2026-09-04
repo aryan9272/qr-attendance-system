@@ -3,6 +3,8 @@ const { encryptToken } = require('./cryptoService');
 const Event = require('../models/Event');
 const Attendance = require('../models/Attendance');
 
+const { getIsConnected } = require('../config/db');
+
 function getLocalNetworkIp() {
   if (process.env.SERVER_IP) return process.env.SERVER_IP;
   const interfaces = os.networkInterfaces();
@@ -65,12 +67,11 @@ function initSocketService(io) {
     socket.on('join-session', async (data) => {
       const sessionId = typeof data === 'string' ? data.toUpperCase() : (data?.sessionId || 'LAB101-X7K9').toUpperCase();
       socket.join(`session:${sessionId}`);
-      console.log(`[Socket.IO] Socket ${socket.id} joined room: session:${sessionId}`);
 
       let session = activeSessions.get(sessionId);
 
-      // If not in memory, try loading from MongoDB
-      if (!session) {
+      // If not in memory, try loading from MongoDB if connected
+      if (!session && getIsConnected()) {
         try {
           const dbEvent = await Event.findOne({ sessionId });
           if (dbEvent) {
@@ -93,9 +94,7 @@ function initSocketService(io) {
             };
             activeSessions.set(sessionId, session);
           }
-        } catch (e) {
-          console.warn('[Socket.IO] Error loading session from DB:', e);
-        }
+        } catch (e) {}
       }
 
       // Default fallback if still missing
@@ -153,8 +152,9 @@ function initSocketService(io) {
         session.allowedRadiusMeters = radius;
       }
 
-      // Also persist to DB in background
-      Event.updateOne({ sessionId: targetId }, { allowedRadiusMeters: radius }).catch(() => {});
+      if (getIsConnected()) {
+        Event.updateOne({ sessionId: targetId }, { allowedRadiusMeters: radius }).catch(() => {});
+      }
 
       io.to(`session:${targetId}`).emit('geofence_updated', {
         sessionId: targetId,

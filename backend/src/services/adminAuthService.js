@@ -17,31 +17,54 @@ const otpStore = {
   requestTimestamps: [],
 };
 
+const { getIsConnected } = require('../config/db');
+
+// In-Memory Admin Fallback Store
+const inMemoryAdmin = {
+  _id: 'in-memory-admin-id',
+  email: (process.env.ADMIN_OWNER_EMAIL || 'admin@proxyqr.com').toLowerCase().trim(),
+  passwordHash: '',
+  tokenVersion: 1,
+  save: async function () { return this; },
+};
+
 /**
- * Ensure single Admin document exists in DB with hashed password
+ * Ensure single Admin document exists in DB with hashed password (or in-memory fallback)
  */
 async function getOrInitAdmin() {
   const ownerEmail = (process.env.ADMIN_OWNER_EMAIL || 'admin@proxyqr.com').toLowerCase().trim();
-  let admin = await Admin.findOne({ email: ownerEmail });
 
-  if (!admin) {
-    // Check if any admin exists
-    admin = await Admin.findOne();
-  }
-
-  if (!admin) {
+  if (!inMemoryAdmin.passwordHash) {
     const salt = await bcrypt.genSalt(10);
-    const hash = await bcrypt.hash(process.env.ADMIN_PASSWORD_INIT || DEFAULT_MASTER_PASS, salt);
-
-    admin = await Admin.create({
-      email: ownerEmail,
-      passwordHash: hash,
-      tokenVersion: 1,
-    });
-    console.log(`[Admin Security] Created initial Master Admin account for: ${ownerEmail}`);
+    inMemoryAdmin.passwordHash = await bcrypt.hash(process.env.ADMIN_PASSWORD_INIT || DEFAULT_MASTER_PASS, salt);
   }
 
-  return admin;
+  if (!getIsConnected()) {
+    return inMemoryAdmin;
+  }
+
+  try {
+    let admin = await Admin.findOne({ email: ownerEmail });
+
+    if (!admin) {
+      // Check if any admin exists
+      admin = await Admin.findOne();
+    }
+
+    if (!admin) {
+      admin = await Admin.create({
+        email: ownerEmail,
+        passwordHash: inMemoryAdmin.passwordHash,
+        tokenVersion: 1,
+      });
+      console.log(`[Admin Security] Created initial Master Admin account for: ${ownerEmail}`);
+    }
+
+    return admin;
+  } catch (err) {
+    console.warn('[Admin Auth] MongoDB query error, falling back to in-memory admin:', err.message);
+    return inMemoryAdmin;
+  }
 }
 
 /**
