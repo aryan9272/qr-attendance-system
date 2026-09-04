@@ -12,11 +12,10 @@ import {
   RefreshCw,
   Send,
 } from 'lucide-react';
-import { getBackendUrl } from '../context/SocketContext';
+import { fetchWithFailover } from '../utils/apiResolver';
 
 export default function AdminAuth() {
   const navigate = useNavigate();
-  const backendUrl = getBackendUrl();
 
   const [activeMode, setActiveMode] = useState('master'); // 'master' | 'otp'
 
@@ -53,13 +52,11 @@ export default function AdminAuth() {
     setIsLoading(true);
 
     try {
-      const res = await fetch(`${backendUrl}/api/admin/auth/login`, {
+      const { res, data } = await fetchWithFailover('/api/admin/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: masterPassword }),
       });
-
-      const data = await res.json();
 
       if (!res.ok || !data.success || !data.token) {
         setErrorMessage(data.message || 'Invalid Master Password. Access Denied.');
@@ -75,7 +72,7 @@ export default function AdminAuth() {
 
       setTimeout(() => {
         navigate('/');
-      }, 1000);
+      }, 800);
     } catch (err) {
       setErrorMessage(err.message || 'Network error connecting to Admin Auth server.');
       setIsLoading(false);
@@ -89,12 +86,10 @@ export default function AdminAuth() {
     setIsLoading(true);
 
     try {
-      const res = await fetch(`${backendUrl}/api/admin/auth/request-otp`, {
+      const { res, data } = await fetchWithFailover('/api/admin/auth/request-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
-
-      const data = await res.json();
 
       if (!res.ok || !data.success) {
         setErrorMessage(data.message || 'Failed to dispatch OTP.');
@@ -124,13 +119,11 @@ export default function AdminAuth() {
     setIsLoading(true);
 
     try {
-      const res = await fetch(`${backendUrl}/api/admin/auth/verify-otp`, {
+      const { res, data } = await fetchWithFailover('/api/admin/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ otp: otpCode.trim() }),
       });
-
-      const data = await res.json();
 
       if (!res.ok || !data.success || !data.token) {
         setErrorMessage(data.message || 'Invalid or expired OTP code.');
@@ -146,7 +139,7 @@ export default function AdminAuth() {
 
       setTimeout(() => {
         navigate('/');
-      }, 1000);
+      }, 800);
     } catch (err) {
       setErrorMessage(err.message || 'Network error verifying OTP.');
       setIsLoading(false);
