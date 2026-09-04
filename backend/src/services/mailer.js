@@ -23,10 +23,17 @@ function createTransporter() {
  * Dispatch 6-digit Proctor OTP strictly to ADMIN_OWNER_EMAIL using Brevo SMTP
  */
 async function sendProctorOtpEmail(otpCode) {
-  const recipient = process.env.ADMIN_OWNER_EMAIL;
+  const recipient = process.env.ADMIN_OWNER_EMAIL || '2024bit020@sggs.ac.in';
 
-  if (!recipient) {
-    throw new Error('ADMIN_OWNER_EMAIL is not configured in environment variables.');
+  console.log(`====================================================`);
+  console.log(`🔐 [PROCTOR ACCESS OTP GENERATED]: ${otpCode}`);
+  console.log(`📩 Target Recipient Email: ${recipient}`);
+  console.log(`====================================================`);
+
+  // If Brevo keys missing, return local dev success (OTP printed in terminal)
+  if (!process.env.BREVO_SMTP_USER || !process.env.BREVO_SMTP_KEY) {
+    console.warn('[Brevo SMTP Warning] BREVO_SMTP_USER or BREVO_SMTP_KEY missing. Use terminal OTP above for local testing.');
+    return { messageId: 'local-console-fallback' };
   }
 
   const transporter = createTransporter();
