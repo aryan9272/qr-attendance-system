@@ -16,6 +16,7 @@ import {
   Pause,
   Edit2,
   Check,
+  LogOut,
 } from 'lucide-react';
 import VerificationResultModal from './VerificationResultModal';
 import { useSocket } from '../context/SocketContext';
@@ -43,6 +44,32 @@ const YEARS = [
   'Ph.D',
 ];
 
+const DEFAULT_GOOGLE_CLIENT_ID = '136625053294-olf8ok1trq36i3qbjt38vs4l8e84c1o2.apps.googleusercontent.com';
+
+// Official Multi-Colored Google 'G' Icon SVG
+function GoogleGIcon() {
+  return (
+    <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
+      <path
+        fill="#EA4335"
+        d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.3 9 5 12 5z"
+      />
+      <path
+        fill="#4285F4"
+        d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.6 14.8c-.3-.8-.4-1.8-.4-2.8L1.9 6.3C.7 8.7 0 10.3 0 12s.7 3.3 1.9 5.7l3.7-2.9z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.3-6.4-5.2L1.9 16C3.7 19.7 7.5 23 12 23z"
+      />
+    </svg>
+  );
+}
+
 // Helper to generate or retrieve persistent Device UUID (Anti-Proxy Lock)
 function getOrCreateDeviceUuid() {
   try {
@@ -69,6 +96,16 @@ export default function StudentScanner() {
 
   const deviceUuid = getOrCreateDeviceUuid();
 
+  // Google OAuth Student Identity State
+  const [googleStudent, setGoogleStudent] = useState(() => {
+    try {
+      const saved = localStorage.getItem('proxyqr_student_google');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
   // Cached Profile State
   const [isCachedProfile, setIsCachedProfile] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -93,19 +130,108 @@ export default function StudentScanner() {
   const [modalOpen, setModalOpen] = useState(false);
   const [submitError, setSubmitError] = useState('');
 
-  const activeToken = tokenFromUrl || qrData?.token || '';
+  // Fix: Prioritize live rotating socket token (qrData.token) over static URL query param
+  const activeToken = qrData?.token || tokenFromUrl || '';
   const isSessionPaused = qrData?.status === 'PAUSED' || qrData?.status === 'TERMINATED';
   const requireMobileNumber = qrData?.customFields?.requireMobileNumber === true;
 
-  // Load Saved Profile from localStorage & indexedDB
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID;
+
+  // Initialize Google Identity Services (GSI) SDK
+  useEffect(() => {
+    const loadGsi = () => {
+      if (window.google?.accounts?.id) {
+        initGsi();
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.onload = initGsi;
+      document.body.appendChild(script);
+    };
+
+    const initGsi = () => {
+      try {
+        if (window.google?.accounts?.id) {
+          window.google.accounts.id.initialize({
+            client_id: googleClientId,
+            callback: handleGoogleCredentialResponse,
+            auto_select: false,
+          });
+
+          // Render Google Official Button inside div container
+          const btnDiv = document.getElementById('google-student-btn-container');
+          if (btnDiv) {
+            window.google.accounts.id.renderButton(btnDiv, {
+              theme: 'outline',
+              size: 'large',
+              width: '100%',
+              text: 'continue_with',
+              shape: 'pill',
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('GSI init note:', e);
+      }
+    };
+
+    loadGsi();
+  }, [googleClientId]);
+
+  // Handle Google OAuth Credential Response
+  const handleGoogleCredentialResponse = (response) => {
+    try {
+      const base64Url = response.credential.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(
+        atob(base64)
+          .split('')
+          .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+          .join('')
+      );
+
+      const parsed = JSON.parse(jsonPayload);
+      if (parsed?.email) {
+        setGoogleStudent(parsed);
+        setStudentEmail(parsed.email);
+        if (!studentName && parsed.name) {
+          setStudentName(parsed.name);
+        }
+        localStorage.setItem('proxyqr_student_google', JSON.stringify(parsed));
+      }
+    } catch (err) {
+      console.warn('Google Auth Credential Parse Error:', err);
+    }
+  };
+
+  // Trigger Google One-Tap / OAuth Prompt
+  const triggerGoogleAuthPrompt = () => {
+    if (window.google?.accounts?.id) {
+      window.google.accounts.id.prompt();
+    } else {
+      alert('Google Auth SDK is loading... Please try again in 2 seconds.');
+    }
+  };
+
+  // Logout Google Account
+  const handleGoogleLogout = () => {
+    setGoogleStudent(null);
+    setStudentEmail('');
+    localStorage.removeItem('proxyqr_student_google');
+  };
+
+  // Load Saved Profile from localStorage
   useEffect(() => {
     try {
       const savedProfile = localStorage.getItem('proxyqr_student_profile');
       if (savedProfile) {
         const parsed = JSON.parse(savedProfile);
-        if (parsed.regNo && parsed.email) {
-          setStudentName(parsed.studentName || '');
-          setStudentEmail(parsed.email || '');
+        if (parsed.regNo) {
+          setStudentName((prev) => prev || parsed.studentName || '');
+          setStudentEmail((prev) => prev || parsed.email || '');
           setRegNo(parsed.regNo || '');
           setYear(parsed.year || YEARS[0]);
           setBranch(parsed.branch || DEPARTMENTS[0]);
@@ -115,6 +241,16 @@ export default function StudentScanner() {
       }
     } catch (e) {}
   }, []);
+
+  // Sync Google Student Email to Form
+  useEffect(() => {
+    if (googleStudent?.email) {
+      setStudentEmail(googleStudent.email);
+      if (!studentName && googleStudent.name) {
+        setStudentName(googleStudent.name);
+      }
+    }
+  }, [googleStudent]);
 
   // Update session ID if available in socket qrData
   useEffect(() => {
@@ -169,6 +305,11 @@ export default function StudentScanner() {
   const handleSubmitAttendance = async (e) => {
     e.preventDefault();
     setSubmitError('');
+
+    if (!googleStudent && !studentEmail.trim()) {
+      setSubmitError('Google Identity Authentication is required. Click "Continue with Google" above.');
+      return;
+    }
 
     if (!studentName.trim() || !regNo.trim() || !studentEmail.trim()) {
       setSubmitError('Please complete Name, Registration No, and Email fields.');
@@ -272,6 +413,53 @@ export default function StudentScanner() {
           </div>
         </div>
 
+        {/* GOOGLE OAUTH 2.0 AUTHENTICATION SECTION */}
+        <div className="glass-panel p-4 rounded-3xl space-y-3 border border-slate-800">
+          <div className="text-xs font-mono font-bold text-slate-300 flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-cyan-400">
+              <Lock className="w-3.5 h-3.5" /> Google OAuth Identity Verification
+            </span>
+            <span className="text-[10px] text-slate-500">REQUIRED</span>
+          </div>
+
+          {!googleStudent ? (
+            <div className="space-y-2">
+              <div id="google-student-btn-container" className="w-full flex justify-center"></div>
+
+              <button
+                type="button"
+                onClick={triggerGoogleAuthPrompt}
+                className="w-full py-3 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs font-mono flex items-center justify-center gap-2.5 shadow-[0_0_20px_rgba(255,255,255,0.2)] transition-all cursor-pointer"
+              >
+                <GoogleGIcon />
+                <span>Continue with Google</span>
+              </button>
+              <p className="text-[10px] font-mono text-slate-400 text-center">
+                Authenticate with your verified student Google account (@sggs.ac.in or @gmail.com)
+              </p>
+            </div>
+          ) : (
+            <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between text-xs font-mono">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                <div>
+                  <div className="font-bold text-emerald-300">{googleStudent.email}</div>
+                  <div className="text-[10px] text-slate-400">Authenticated via Google OAuth 2.0</div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleGoogleLogout}
+                className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-800 transition-colors cursor-pointer"
+                title="Change Google Account"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Paused Session Notice */}
         {isSessionPaused && (
           <div className="p-4 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs font-mono flex items-center gap-3 animate-pulse">
@@ -356,19 +544,27 @@ export default function StudentScanner() {
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-slate-300 font-semibold flex items-center gap-1.5">
-              <Mail className="w-3.5 h-3.5 text-cyan-400" />
-              Student Email Address
+            <label className="text-slate-300 font-semibold flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-slate-300">
+                <Mail className="w-3.5 h-3.5 text-cyan-400" /> Student Email Address
+              </span>
+              {googleStudent && (
+                <span className="text-[10px] text-emerald-400 font-mono">GOOGLE VERIFIED</span>
+              )}
             </label>
             <input
               type="email"
               value={studentEmail}
               onChange={(e) => setStudentEmail(e.target.value)}
               placeholder="2024bit020@sggs.ac.in"
-              readOnly={isCachedProfile && !isEditingProfile}
+              readOnly={!!googleStudent || (isCachedProfile && !isEditingProfile)}
               required
-              className={`w-full px-4 py-3 rounded-xl glass-input text-slate-200 font-sans text-sm ${
-                isCachedProfile && !isEditingProfile ? 'bg-slate-900/60 border-slate-800 cursor-not-allowed' : ''
+              className={`w-full px-4 py-3 rounded-xl glass-input font-sans text-sm ${
+                googleStudent
+                  ? 'bg-slate-900/90 text-emerald-300 border-emerald-500/40 cursor-not-allowed font-semibold'
+                  : isCachedProfile && !isEditingProfile
+                  ? 'bg-slate-900/60 border-slate-800 cursor-not-allowed text-slate-200'
+                  : 'text-slate-200'
               }`}
             />
           </div>

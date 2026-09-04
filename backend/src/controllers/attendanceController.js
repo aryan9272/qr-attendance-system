@@ -107,13 +107,13 @@ exports.verifyAttendance = async (req, res) => {
       });
     }
 
-    // 20s Grace Period Check (Total 80 seconds max)
+    // 3-Minute Grace Period Check (Total 180 seconds max to allow typing time)
     const tokenAgeMs = Date.now() - (tokenPayload.timestamp || 0);
-    if (tokenAgeMs > 80 * 1000) {
+    if (tokenAgeMs > 180 * 1000) {
       return res.status(400).json({
         success: false,
         errorType: 'EXPIRED_TOKEN',
-        error: 'Dynamic QR token expired over 20s ago. Scan the fresh projector QR code.',
+        error: 'Dynamic QR token expired over 3 mins ago. Scan the fresh projector QR code.',
       });
     }
 
