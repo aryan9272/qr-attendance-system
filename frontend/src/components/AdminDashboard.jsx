@@ -254,7 +254,13 @@ export default function AdminDashboard() {
         },
         body: JSON.stringify({ sessionId: selectedSessionId }),
       });
-    } catch (e) {}
+      if (socket) {
+        socket.emit('start-session', { sessionId: selectedSessionId });
+      }
+      fetchSessions();
+    } catch (e) {
+      console.warn('Start session error:', e);
+    }
   };
 
   // Pause Session
@@ -270,7 +276,13 @@ export default function AdminDashboard() {
         },
         body: JSON.stringify({ sessionId: selectedSessionId }),
       });
-    } catch (e) {}
+      if (socket) {
+        socket.emit('pause-session', { sessionId: selectedSessionId });
+      }
+      fetchSessions();
+    } catch (e) {
+      console.warn('Pause session error:', e);
+    }
   };
 
   // Terminate Session (Double Check Permanently End)
