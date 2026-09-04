@@ -32,6 +32,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
+import { fetchWithFailover } from '../utils/apiResolver';
 
 const DEPARTMENTS = [
   'Information Technology',
@@ -68,6 +69,7 @@ const OVERRIDE_REASONS = [
 export default function AdminDashboard() {
   const {
     connected,
+    socket,
     qrData,
     countdown,
     currentSessionId,
@@ -132,10 +134,9 @@ export default function AdminDashboard() {
   const fetchSessions = async () => {
     try {
       const token = localStorage.getItem('admin_token');
-      const res = await fetch(`${backendUrl}/api/attendance/events`, {
+      const { res, data } = await fetchWithFailover('/api/attendance/events', {
         headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
       });
-      const data = await res.json();
       if (data?.success && Array.isArray(data.events)) {
         setSessionsList(data.events);
       }
@@ -148,10 +149,9 @@ export default function AdminDashboard() {
     try {
       const sid = (sessionId || selectedSessionId).toUpperCase();
       const token = localStorage.getItem('admin_token');
-      const res = await fetch(`${backendUrl}/api/attendance/stats/${sid}`, {
+      const { res, data } = await fetchWithFailover(`/api/attendance/stats/${sid}`, {
         headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
       });
-      const data = await res.json();
       if (data?.success && data?.stats) {
         setAttendeesRoster(data.stats.recent || []);
         setTotalCount(data.stats.count || 0);
@@ -175,8 +175,7 @@ export default function AdminDashboard() {
 
   // Listen to Socket.IO real-time attendee additions and edits
   useEffect(() => {
-    if (!useSocket().socket) return;
-    const socket = useSocket().socket;
+    if (!socket) return;
 
     const handleNewAttendee = (data) => {
       if (data.sessionId?.toUpperCase() === selectedSessionId.toUpperCase()) {
@@ -200,7 +199,7 @@ export default function AdminDashboard() {
       socket.off('new_attendee', handleNewAttendee);
       socket.off('attendee_updated', handleAttendeeUpdated);
     };
-  }, [selectedSessionId, useSocket]);
+  }, [selectedSessionId, socket]);
 
   // Handle Session Switch
   const handleSelectSession = (sid) => {
@@ -215,7 +214,7 @@ export default function AdminDashboard() {
     e.preventDefault();
     try {
       const token = localStorage.getItem('admin_token');
-      const res = await fetch(`${backendUrl}/api/admin/sessions/create`, {
+      const { res, data } = await fetchWithFailover('/api/admin/sessions/create', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -230,7 +229,6 @@ export default function AdminDashboard() {
         }),
       });
 
-      const data = await res.json();
       if (data?.success && data?.session) {
         setIsCreateModalOpen(false);
         fetchSessions();
@@ -247,7 +245,7 @@ export default function AdminDashboard() {
   const handleStartSession = async () => {
     try {
       const token = localStorage.getItem('admin_token');
-      await fetch(`${backendUrl}/api/admin/sessions/start`, {
+      await fetchWithFailover('/api/admin/sessions/start', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -263,7 +261,7 @@ export default function AdminDashboard() {
   const handlePauseSession = async () => {
     try {
       const token = localStorage.getItem('admin_token');
-      await fetch(`${backendUrl}/api/admin/sessions/pause`, {
+      await fetchWithFailover('/api/admin/sessions/pause', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -279,7 +277,7 @@ export default function AdminDashboard() {
   const handleTerminateSessionSubmit = async () => {
     try {
       const token = localStorage.getItem('admin_token');
-      await fetch(`${backendUrl}/api/admin/sessions/terminate`, {
+      await fetchWithFailover('/api/admin/sessions/terminate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -301,7 +299,7 @@ export default function AdminDashboard() {
     e.preventDefault();
     try {
       const token = localStorage.getItem('admin_token');
-      const res = await fetch(`${backendUrl}/api/admin/manual-intake`, {
+      const { res, data } = await fetchWithFailover('/api/admin/manual-intake', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -320,7 +318,6 @@ export default function AdminDashboard() {
         }),
       });
 
-      const data = await res.json();
       if (data?.success) {
         setIsManualModalOpen(false);
         setManualName('');
@@ -357,7 +354,7 @@ export default function AdminDashboard() {
 
     try {
       const token = localStorage.getItem('admin_token');
-      const res = await fetch(`${backendUrl}/api/admin/attendee/${editingAttendee._id}`, {
+      const { res, data } = await fetchWithFailover(`/api/admin/attendee/${editingAttendee._id}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -375,7 +372,6 @@ export default function AdminDashboard() {
         }),
       });
 
-      const data = await res.json();
       if (data?.success) {
         setEditingAttendee(null);
         fetchRoster(selectedSessionId);
