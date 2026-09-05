@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <rect width="100" height="100" rx="24" fill="#020617"/>
+  <rect x="2" y="2" width="96" height="96" rx="22" fill="none" stroke="#06b6d4" stroke-width="3" opacity="0.6"/>
+  <!-- Top Left Finder Pattern -->
+  <rect x="16" y="16" width="28" height="28" rx="6" fill="#06b6d4"/>
+  <rect x="22" y="22" width="16" height="16" rx="3" fill="#020617"/>
+  <rect x="26" y="26" width="8" height="8" rx="1.5" fill="#38bdf8"/>
+
+  <!-- Top Right Finder Pattern -->
+  <rect x="56" y="16" width="28" height="28" rx="6" fill="#06b6d4"/>
+  <rect x="62" y="22" width="16" height="16" rx="3" fill="#020617"/>
+  <rect x="66" y="26" width="8" height="8" rx="1.5" fill="#38bdf8"/>
+
+  <!-- Bottom Left Finder Pattern -->
+  <rect x="16" y="56" width="28" height="28" rx="6" fill="#06b6d4"/>
+  <rect x="22" y="62" width="16" height="16" rx="3" fill="#020617"/>
+  <rect x="26" y="66" width="8" height="8" rx="1.5" fill="#38bdf8"/>
+
+  <!-- Data Modules -->
+  <rect x="56" y="56" width="10" height="10" rx="2" fill="#38bdf8"/>
+  <rect x="74" y="56" width="10" height="10" rx="2" fill="#06b6d4"/>
+  <rect x="56" y="74" width="10" height="10" rx="2" fill="#06b6d4"/>
+  <rect x="74" y="74" width="10" height="10" rx="2" fill="#38bdf8"/>
+  <rect x="65" y="65" width="10" height="10" rx="2" fill="#22d3ee"/>
+</svg>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  ShieldCheck,
+  QrCode,
   Radio,
   Lock,
   LogOut,
@@ -34,6 +34,8 @@ export default function Navbar() {
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [showNewPassword, setShowNewPassword] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -199,47 +201,25 @@ export default function Navbar() {
     if (cooldown > 0) return;
     setPasswordError('');
     setOtpSentMessage('');
-    setIsDevConsole(false);
-
-    const token = localStorage.getItem('admin_token');
-    if (!token) {
-      setPasswordError('Session expired or not logged in. Please log in first, or click "Forgot Password?" on the login page.');
-      return;
-    }
-
     setIsSendingOtp(true);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
     try {
+      const token = localStorage.getItem('admin_token');
       const res = await fetch(`${backendUrl}/api/admin/auth/request-change-password-otp`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'x-admin-token': token,
+          'Content-Type': 'application/json',
         },
-        signal: controller.signal,
       });
-      clearTimeout(timeoutId);
-
       const data = await res.json();
-      if (!res.ok || !data.success) {
-        setPasswordError(data.message || 'Failed to send OTP to owner email.');
-        setIsSendingOtp(false);
-        return;
-      }
+      if (!data.success) throw new Error(data.message || 'Failed to send OTP.');
 
       setIsDevConsole(!!data.isDevConsole);
-      setOtpSentMessage(data.message || 'OTP sent! Please check your inbox and spam folder.');
-      setCooldown(30);
+      setOtpSentMessage(data.message);
+      setCooldown(60);
     } catch (err) {
-      clearTimeout(timeoutId);
-      if (err.name === 'AbortError') {
-        setPasswordError('Request timed out (server was spinning up). Please click "Send OTP to Owner Email" again.');
-      } else {
-        setPasswordError(err.message || 'Network error requesting OTP.');
-      }
+      setPasswordError(err.message);
     } finally {
       setIsSendingOtp(false);
     }
@@ -250,19 +230,18 @@ export default function Navbar() {
     setPasswordError('');
     setPasswordSuccess('');
 
-    const token = localStorage.getItem('admin_token');
-    if (!token) {
-      setPasswordError('Session expired or not logged in. Please log in first, or click "Forgot Password?" on the login page.');
-      return;
-    }
-
-    if (!currentPassword || !newPassword || !otpCode) {
-      setPasswordError('Please fill in current password, new password, and the 6-digit email OTP.');
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New passwords do not match.');
       return;
     }
 
     if (newPassword.length < 8) {
-      setPasswordError('New password must be at least 8 characters long.');
+      setPasswordError('New master password must be at least 8 characters long.');
+      return;
+    }
+
+    if (!otpCode || otpCode.trim().length !== 6) {
+      setPasswordError('Please enter the 6-digit email OTP.');
       return;
     }
 
@@ -273,29 +252,34 @@ export default function Navbar() {
       const res = await fetch(`${backendUrl}/api/admin/auth/change-password`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
           'x-admin-token': token,
+          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ currentPassword, newPassword, otp: otpCode.trim() }),
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          otp: otpCode.trim(),
+        }),
       });
 
       const data = await res.json();
-      if (!res.ok || !data.success) {
-        setPasswordError(data.message || 'Failed to update master password.');
-        setIsSubmitting(false);
-        return;
+
+      if (!data.success) {
+        throw new Error(data.message || 'Failed to update master password.');
       }
 
       if (data.token) {
         localStorage.setItem('admin_token', data.token);
       }
 
-      setPasswordSuccess('Master password updated successfully! All other sessions revoked.');
+      setPasswordSuccess('Master Password updated successfully! Active sessions updated.');
+
       setTimeout(() => {
         setIsChangePasswordModalOpen(false);
         setCurrentPassword('');
         setNewPassword('');
+        setConfirmPassword('');
         setOtpCode('');
         setOtpSentMessage('');
         setPasswordSuccess('');
@@ -320,7 +304,7 @@ export default function Navbar() {
             {/* Logo + Role Pill */}
             <div className="flex items-center space-x-3">
               <div className="p-2 sm:p-2.5 rounded-2xl bg-gradient-to-tr from-cyan-500/20 via-blue-500/20 to-indigo-500/20 border border-cyan-500/40 text-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.3)]">
-                <ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6" />
+                <QrCode className="w-5 h-5 sm:w-6 sm:h-6" />
               </div>
 
               <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
@@ -328,18 +312,18 @@ export default function Navbar() {
                   ProxyQr
                 </span>
                 <span className="inline-flex items-center text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-slate-900 text-cyan-300 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.15)]">
-                  ADMIN CONSOLE
+                  ADMIN DASHBOARD
                 </span>
               </div>
             </div>
 
             {/* Status Indicator + Session Mode + Account Actions */}
             <div className="flex items-center space-x-3 sm:space-x-4">
-              {/* Socket.IO Connection Dot */}
+              {/* Live Attendance Connection Dot */}
               <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs font-mono">
                 <span className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`}></span>
                 <span className={connected ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
-                  {connected ? 'SOCKET ONLINE' : 'SOCKET OFFLINE'}
+                  {connected ? 'LIVE ATTENDANCE' : 'ATTENDANCE OFFLINE'}
                 </span>
               </div>
 
