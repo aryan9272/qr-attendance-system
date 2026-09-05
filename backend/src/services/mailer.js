@@ -68,7 +68,7 @@ async function sendViaBrevoHttpApi(recipient, subjectText, htmlContent) {
   const apiKey = (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || '').trim();
   if (!apiKey) return null;
 
-  const senderUser = (process.env.DEFAULT_FROM_EMAIL || process.env.EMAIL_HOST_USER || process.env.BREVO_SMTP_USER || 'no-reply@proxyqr.com').trim();
+  const senderUser = (process.env.DEFAULT_FROM_EMAIL || process.env.ADMIN_OWNER_EMAIL || process.env.EMAIL_HOST_USER || recipient || 'voyager9579@gmail.com').trim();
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 8000);
