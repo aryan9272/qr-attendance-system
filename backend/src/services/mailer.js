@@ -1,4 +1,10 @@
 const nodemailer = require('nodemailer');
+const dns = require('dns');
+
+// Force Node.js to resolve IPv4 addresses first (fixes ENETUNREACH IPv6 errors on cloud hosts like Render)
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 function createTransporter() {
   const user = (process.env.EMAIL_HOST_USER || process.env.ADMIN_OWNER_EMAIL || process.env.BREVO_SMTP_USER || '').trim();
@@ -14,11 +20,14 @@ function createTransporter() {
 
   if (isGmail) {
     return nodemailer.createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
       auth: {
         user,
         pass,
       },
+      family: 4, // Force IPv4 socket connection
       connectionTimeout: 8000,
       greetingTimeout: 5000,
       socketTimeout: 10000,
@@ -35,6 +44,7 @@ function createTransporter() {
     secure,
     auth: { user, pass },
     tls: { rejectUnauthorized: false },
+    family: 4, // Force IPv4 socket connection
     connectionTimeout: 10000,
     greetingTimeout: 8000,
     socketTimeout: 10000,

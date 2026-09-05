@@ -1,5 +1,12 @@
 const express = require('express');
 const http = require('http');
+const dns = require('dns');
+
+// Force IPv4 resolution across Node.js process to fix IPv6 ENETUNREACH cloud errors on Render
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
+
 const { Server } = require('socket.io');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
