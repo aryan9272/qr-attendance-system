@@ -136,10 +136,15 @@ async function requestSecurityOtp(type = 'CHANGE_PASSWORD') {
   otpStore.failedAttempts = 0;
   otpStore.requestTimestamps.push(now);
 
-  // Dispatch Email via Brevo SMTP
-  await sendSecurityOtpEmail(numericOtp, type);
+  // Dispatch Email via SMTP or Console Fallback
+  const mailResult = await sendSecurityOtpEmail(numericOtp, type);
 
-  return { success: true, message: `Security OTP dispatched to administrator email for ${type}.` };
+  const isDevConsole = !!mailResult.isDevConsole;
+  const msg = isDevConsole
+    ? '[DEV MODE] OTP generated and printed to server console terminal.'
+    : 'OTP sent! Please check your inbox and spam folder.';
+
+  return { success: true, message: msg, isDevConsole };
 }
 
 /**

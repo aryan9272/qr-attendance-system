@@ -83,10 +83,26 @@ export default function AdminAuth() {
     }
   };
 
+  // Cooldown & Dev Mode States
+  const [cooldown, setCooldown] = useState(0);
+  const [isDevConsole, setIsDevConsole] = useState(false);
+
+  useEffect(() => {
+    let timer;
+    if (cooldown > 0) {
+      timer = setInterval(() => {
+        setCooldown((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [cooldown]);
+
   // Request Reset Password OTP
   const handleRequestResetOtp = async () => {
+    if (cooldown > 0) return;
     setResetErrorMessage('');
     setResetInfoMessage('');
+    setIsDevConsole(false);
     setIsRequestingResetOtp(true);
 
     try {
@@ -101,7 +117,9 @@ export default function AdminAuth() {
         return;
       }
 
-      setResetInfoMessage(data.message || 'Recovery OTP sent to administrator email address.');
+      setIsDevConsole(!!data.isDevConsole);
+      setResetInfoMessage(data.message || 'OTP sent! Please check your inbox and spam folder.');
+      setCooldown(30);
     } catch (err) {
       setResetErrorMessage(err.message || 'Network error requesting recovery OTP.');
     } finally {
@@ -291,8 +309,13 @@ export default function AdminAuth() {
             )}
 
             {resetInfoMessage && (
-              <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold">
-                {resetInfoMessage}
+              <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold space-y-1">
+                <div>{resetInfoMessage}</div>
+                {isDevConsole && (
+                  <div className="text-[10px] font-bold text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded w-fit border border-amber-500/30">
+                    [DEV MODE] OTP output to server console terminal
+                  </div>
+                )}
               </div>
             )}
 
@@ -300,11 +323,22 @@ export default function AdminAuth() {
               <button
                 type="button"
                 onClick={handleRequestResetOtp}
-                disabled={isRequestingResetOtp}
-                className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 font-bold transition-all flex items-center justify-center gap-2 cursor-pointer"
+                disabled={isRequestingResetOtp || cooldown > 0}
+                className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 font-bold transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
-                {isRequestingResetOtp ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                <span>Send Recovery OTP to Owner Email</span>
+                {isRequestingResetOtp ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Sending OTP...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    <span>
+                      {cooldown > 0 ? `Resend OTP (${cooldown}s)` : 'Send Recovery OTP to Owner Email'}
+                    </span>
+                  </>
+                )}
               </button>
 
               <form onSubmit={handleResetPasswordSubmit} className="space-y-4">

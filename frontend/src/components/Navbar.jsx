@@ -103,10 +103,24 @@ export default function Navbar() {
   const [otpCode, setOtpCode] = useState('');
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [otpSentMessage, setOtpSentMessage] = useState('');
+  const [cooldown, setCooldown] = useState(0);
+  const [isDevConsole, setIsDevConsole] = useState(false);
+
+  useEffect(() => {
+    let timer;
+    if (cooldown > 0) {
+      timer = setInterval(() => {
+        setCooldown((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [cooldown]);
 
   const handleRequestChangeOtp = async () => {
+    if (cooldown > 0) return;
     setPasswordError('');
     setOtpSentMessage('');
+    setIsDevConsole(false);
     setIsSendingOtp(true);
 
     try {
@@ -126,7 +140,9 @@ export default function Navbar() {
         return;
       }
 
-      setOtpSentMessage(data.message || '6-digit OTP code sent to administrator email address.');
+      setIsDevConsole(!!data.isDevConsole);
+      setOtpSentMessage(data.message || 'OTP sent! Please check your inbox and spam folder.');
+      setCooldown(30);
     } catch (err) {
       setPasswordError(err.message || 'Network error requesting OTP.');
     } finally {
@@ -317,8 +333,13 @@ export default function Navbar() {
             )}
 
             {otpSentMessage && (
-              <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold">
-                {otpSentMessage}
+              <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold space-y-1">
+                <div>{otpSentMessage}</div>
+                {isDevConsole && (
+                  <div className="text-[10px] font-bold text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded w-fit border border-amber-500/30">
+                    [DEV MODE] OTP output to server console terminal
+                  </div>
+                )}
               </div>
             )}
 
@@ -359,10 +380,14 @@ export default function Navbar() {
                   <button
                     type="button"
                     onClick={handleRequestChangeOtp}
-                    disabled={isSendingOtp}
-                    className="text-[11px] text-cyan-400 hover:underline font-bold"
+                    disabled={isSendingOtp || cooldown > 0}
+                    className="text-[11px] text-cyan-400 hover:underline font-bold disabled:opacity-50"
                   >
-                    {isSendingOtp ? 'Sending...' : 'Send OTP to Owner Email'}
+                    {isSendingOtp
+                      ? 'Sending...'
+                      : cooldown > 0
+                      ? `Resend OTP (${cooldown}s)`
+                      : 'Send OTP to Owner Email'}
                   </button>
                 </div>
                 <input

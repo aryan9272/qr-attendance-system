@@ -1,29 +1,36 @@
 const nodemailer = require('nodemailer');
 
 function createTransporter() {
-  const user = process.env.BREVO_SMTP_USER;
-  const pass = process.env.BREVO_SMTP_KEY;
+  const user = process.env.EMAIL_HOST_USER || process.env.BREVO_SMTP_USER;
+  const pass = process.env.EMAIL_HOST_PASSWORD || process.env.BREVO_SMTP_KEY;
+  const host = process.env.EMAIL_HOST || (process.env.BREVO_SMTP_USER ? 'smtp-relay.brevo.com' : 'smtp.gmail.com');
+  const port = parseInt(process.env.EMAIL_PORT || '587', 10);
+  const secure = port === 465;
 
   if (!user || !pass) {
-    console.warn('[Mailer Warning] BREVO_SMTP_USER or BREVO_SMTP_KEY missing in environment variables!');
+    console.warn('[Mailer Warning] EMAIL_HOST_USER or EMAIL_HOST_PASSWORD missing in environment variables. Falling back to Console Email backend.');
+    return null;
   }
 
   return nodemailer.createTransport({
-    host: 'smtp-relay.brevo.com',
-    port: 587,
-    secure: false, // TLS
+    host,
+    port,
+    secure, // false for 587 (TLS), true for 465 (SSL)
     auth: {
-      user: user || 'smtp-user-placeholder',
-      pass: pass || 'smtp-key-placeholder',
+      user,
+      pass,
+    },
+    tls: {
+      rejectUnauthorized: false,
     },
   });
 }
 
 /**
- * Dispatch 6-digit Security OTP strictly to ADMIN_OWNER_EMAIL using Brevo SMTP
+ * Dispatch 6-digit Security OTP strictly to ADMIN_OWNER_EMAIL
  */
 async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
-  const recipient = process.env.ADMIN_OWNER_EMAIL || '2024bit020@sggs.ac.in';
+  const recipient = process.env.ADMIN_OWNER_EMAIL || process.env.EMAIL_HOST_USER || '2024bit020@sggs.ac.in';
 
   let title = 'DELEGATED PROCTOR OTP VERIFICATION';
   let subjectText = `🔐 ProxyQr Proctor Access OTP: ${otpCode}`;
@@ -44,13 +51,19 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   console.log(`📩 Target Recipient Email: ${recipient}`);
   console.log(`====================================================`);
 
-  // If Brevo keys missing, return local dev success (OTP printed in terminal)
-  if (!process.env.BREVO_SMTP_USER || !process.env.BREVO_SMTP_KEY) {
-    console.warn('[Brevo SMTP Warning] BREVO_SMTP_USER or BREVO_SMTP_KEY missing. Use terminal OTP above for testing.');
-    return { messageId: 'local-console-fallback' };
+  const pass = process.env.EMAIL_HOST_PASSWORD || process.env.BREVO_SMTP_KEY;
+
+  // DEV MODE Console Fallback if SMTP password is missing
+  if (!pass) {
+    console.log(`[DEV MODE] OTP sent to console: ${otpCode}`);
+    return { messageId: 'local-console-fallback', isDevConsole: true };
   }
 
   const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[DEV MODE] OTP sent to console: ${otpCode}`);
+    return { messageId: 'local-console-fallback', isDevConsole: true };
+  }
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -92,16 +105,28 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
     </html>
   `;
 
+  const senderUser = process.env.DEFAULT_FROM_EMAIL || process.env.EMAIL_HOST_USER || process.env.BREVO_SMTP_USER || 'no-reply@proxyqr.com';
+
   const mailOptions = {
-    from: `"ProxyQr Admin Security" <${process.env.BREVO_SMTP_USER || 'no-reply@proxyqr.com'}>`,
+    from: `"ProxyQr Admin Security" <${senderUser}>`,
     to: recipient,
     subject: subjectText,
     html: htmlContent,
   };
 
-  const info = await transporter.sendMail(mailOptions);
-  console.log(`[Brevo SMTP Mailer] OTP dispatched to ${recipient}. MessageId: ${info.messageId}`);
-  return info;
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`[SMTP Mailer] OTP dispatched to ${recipient}. MessageId: ${info.messageId}`);
+    return { messageId: info.messageId, isDevConsole: false };
+  } catch (err) {
+    console.error(`[SMTP Error] Failed to send email via SMTP:`, err);
+    if (err.code === 'EAUTH' || err.responseCode === 535) {
+      throw new Error('SMTP Authentication failure. Please verify your EMAIL_HOST_USER and EMAIL_HOST_PASSWORD credentials.');
+    } else if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKET') {
+      throw new Error('SMTP Connection timeout connecting to mail server.');
+    }
+    throw new Error(`Email dispatch failed: ${err.message}`);
+  }
 }
 
 async function sendProctorOtpEmail(otpCode) {
@@ -112,3 +137,4 @@ module.exports = {
   sendProctorOtpEmail,
   sendSecurityOtpEmail,
 };
+

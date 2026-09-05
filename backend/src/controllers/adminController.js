@@ -117,7 +117,8 @@ exports.requestChangePasswordOtp = async (req, res) => {
     const result = await requestSecurityOtp('CHANGE_PASSWORD');
     return res.json({
       success: true,
-      message: 'Verification OTP dispatched to administrator email.',
+      message: result.message,
+      isDevConsole: result.isDevConsole,
     });
   } catch (err) {
     return res.status(400).json({ success: false, message: err.message });
@@ -166,7 +167,8 @@ exports.requestResetPasswordOtp = async (req, res) => {
     const result = await requestSecurityOtp('RESET_PASSWORD');
     return res.json({
       success: true,
-      message: 'Account recovery OTP dispatched to administrator email.',
+      message: result.message,
+      isDevConsole: result.isDevConsole,
     });
   } catch (err) {
     return res.status(400).json({ success: false, message: err.message });
