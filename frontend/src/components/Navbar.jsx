@@ -134,6 +134,9 @@ export default function Navbar() {
 
     setIsSendingOtp(true);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
     try {
       const res = await fetch(`${backendUrl}/api/admin/auth/request-change-password-otp`, {
         method: 'POST',
@@ -141,7 +144,9 @@ export default function Navbar() {
           Authorization: `Bearer ${token}`,
           'x-admin-token': token,
         },
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -154,7 +159,12 @@ export default function Navbar() {
       setOtpSentMessage(data.message || 'OTP sent! Please check your inbox and spam folder.');
       setCooldown(30);
     } catch (err) {
-      setPasswordError(err.message || 'Network error requesting OTP.');
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        setPasswordError('Request timed out (server was spinning up). Please click "Send OTP to Owner Email" again.');
+      } else {
+        setPasswordError(err.message || 'Network error requesting OTP.');
+      }
     } finally {
       setIsSendingOtp(false);
     }

@@ -19,6 +19,9 @@ function createTransporter() {
         user,
         pass,
       },
+      connectionTimeout: 8000,
+      greetingTimeout: 5000,
+      socketTimeout: 10000,
     });
   }
 
@@ -128,7 +131,11 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   };
 
   try {
-    const info = await transporter.sendMail(mailOptions);
+    const sendMailPromise = transporter.sendMail(mailOptions);
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('SMTP dispatch timed out (12s limit).')), 12000)
+    );
+    const info = await Promise.race([sendMailPromise, timeoutPromise]);
     console.log(`[SMTP Mailer] OTP dispatched to ${recipient}. MessageId: ${info.messageId}`);
     return { messageId: info.messageId, isDevConsole: false };
   } catch (err) {
