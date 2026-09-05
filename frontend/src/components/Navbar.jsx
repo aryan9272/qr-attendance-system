@@ -12,6 +12,8 @@ import {
   Play,
   Clock,
   Sparkles,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
 
@@ -25,7 +27,9 @@ export default function Navbar() {
   const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [newPassword, setNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -352,26 +356,46 @@ export default function Navbar() {
             <form onSubmit={handleChangePasswordSubmit} className="space-y-4 text-xs font-mono">
               <div className="space-y-1.5">
                 <label className="text-slate-300 font-semibold block">Current Master Password</label>
-                <input
-                  type="password"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                  placeholder="Enter current password..."
-                  required
-                  className="w-full px-4 py-3 rounded-xl glass-input text-slate-200"
-                />
+                <div className="relative">
+                  <input
+                    type={showCurrentPassword ? 'text' : 'password'}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Enter current password..."
+                    required
+                    className="w-full pl-4 pr-11 py-3 rounded-xl glass-input text-slate-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-cyan-300 transition-colors p-1 cursor-pointer"
+                    title={showCurrentPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-slate-300 font-semibold block">New Master Password (Min 8 chars)</label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Enter new master password..."
-                  required
-                  className="w-full px-4 py-3 rounded-xl glass-input text-slate-200"
-                />
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Enter new master password..."
+                    required
+                    className="w-full pl-4 pr-11 py-3 rounded-xl glass-input text-slate-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-cyan-300 transition-colors p-1 cursor-pointer"
+                    title={showNewPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-1.5">

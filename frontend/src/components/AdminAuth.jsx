@@ -83,20 +83,6 @@ export default function AdminAuth() {
     }
   };
 
-  // Cooldown & Dev Mode States
-  const [cooldown, setCooldown] = useState(0);
-  const [isDevConsole, setIsDevConsole] = useState(false);
-
-  useEffect(() => {
-    let timer;
-    if (cooldown > 0) {
-      timer = setInterval(() => {
-        setCooldown((prev) => prev - 1);
-      }, 1000);
-    }
-    return () => clearInterval(timer);
-  }, [cooldown]);
-
   // Request Reset Password OTP
   const handleRequestResetOtp = async () => {
     if (cooldown > 0) return;
@@ -250,15 +236,25 @@ export default function AdminAuth() {
                 Forgot Password?
               </button>
             </div>
-            <input
-              type="password"
-              value={masterPassword}
-              onChange={(e) => setMasterPassword(e.target.value)}
-              placeholder="Enter master password..."
-              autoComplete="current-password"
-              required
-              className="w-full px-4 py-3.5 rounded-xl glass-input font-mono text-slate-200 placeholder:text-slate-500 focus:border-cyan-500 text-sm"
-            />
+            <div className="relative">
+              <input
+                type={showMasterPassword ? 'text' : 'password'}
+                value={masterPassword}
+                onChange={(e) => setMasterPassword(e.target.value)}
+                placeholder="Enter master password..."
+                autoComplete="current-password"
+                required
+                className="w-full pl-4 pr-11 py-3.5 rounded-xl glass-input font-mono text-slate-200 placeholder:text-slate-500 focus:border-cyan-500 text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => setShowMasterPassword(!showMasterPassword)}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-cyan-300 transition-colors p-1 cursor-pointer"
+                title={showMasterPassword ? 'Hide password' : 'Show password'}
+              >
+                {showMasterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
 
           <button
@@ -357,14 +353,24 @@ export default function AdminAuth() {
 
                 <div className="space-y-1.5">
                   <label className="text-slate-300 font-semibold block">New Master Password (Min 8 chars)</label>
-                  <input
-                    type="password"
-                    value={newMasterPassword}
-                    onChange={(e) => setNewMasterPassword(e.target.value)}
-                    placeholder="Enter new master password..."
-                    required
-                    className="w-full px-4 py-3 rounded-xl glass-input text-slate-200"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showNewMasterPassword ? 'text' : 'password'}
+                      value={newMasterPassword}
+                      onChange={(e) => setNewMasterPassword(e.target.value)}
+                      placeholder="Enter new master password..."
+                      required
+                      className="w-full pl-4 pr-11 py-3 rounded-xl glass-input text-slate-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewMasterPassword(!showNewMasterPassword)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-cyan-300 transition-colors p-1 cursor-pointer"
+                      title={showNewMasterPassword ? 'Hide password' : 'Show password'}
+                    >
+                      {showNewMasterPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="pt-2 flex items-center justify-end gap-3">
@@ -395,5 +401,3 @@ export default function AdminAuth() {
     </div>
   );
 }
-
-
