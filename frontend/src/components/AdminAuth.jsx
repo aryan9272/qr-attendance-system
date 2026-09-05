@@ -54,11 +54,15 @@ export default function AdminAuth() {
 
   // Clear stale sessions when visiting login page
   useEffect(() => {
+    const alertMsg = sessionStorage.getItem('logout_alert_msg');
     try {
       localStorage.removeItem('admin_token');
       localStorage.removeItem('admin_user');
       sessionStorage.clear();
     } catch (e) {}
+    if (alertMsg) {
+      setErrorMessage(alertMsg);
+    }
   }, []);
 
   // Handle Master Password Login

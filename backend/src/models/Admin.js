@@ -15,7 +15,7 @@ const AdminSchema = new mongoose.Schema(
     },
     tokenVersion: {
       type: Number,
-      default: 1,
+      default: 0,
     },
   },
   {

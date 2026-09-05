@@ -25,7 +25,7 @@ const inMemoryAdmin = {
   _id: 'in-memory-admin-id',
   email: (process.env.ADMIN_OWNER_EMAIL || 'voyager9579@gmail.com').toLowerCase().trim(),
   passwordHash: '',
-  tokenVersion: 1,
+  tokenVersion: 0,
   save: async function () { return this; },
 };
 
@@ -56,7 +56,7 @@ async function getOrInitAdmin() {
       admin = await Admin.create({
         email: ownerEmail,
         passwordHash: inMemoryAdmin.passwordHash,
-        tokenVersion: 1,
+        tokenVersion: 0,
       });
       console.log(`[Admin Security] Created initial Master Admin account for: ${ownerEmail}`);
     }
@@ -291,7 +291,7 @@ async function verifyJwt(tokenStr) {
     const decoded = jwt.verify(tokenStr, JWT_SECRET);
     const admin = await getOrInitAdmin();
 
-    if (decoded.tokenVersion < admin.tokenVersion) {
+    if (decoded.tokenVersion === undefined || decoded.tokenVersion !== admin.tokenVersion) {
       throw new Error('Session invalidated by admin. Please log in again.');
     }
 

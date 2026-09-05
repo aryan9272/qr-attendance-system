@@ -140,6 +140,10 @@ exports.changePassword = async (req, res) => {
 
     const admin = await updateMasterPasswordWithOtp(currentPassword, newPassword, otp);
 
+    if (req.io) {
+      req.io.emit('force_admin_logout');
+    }
+
     const { token } = generateAdminJwt(admin, false);
 
     res.cookie('admin_session', token, {
@@ -191,6 +195,10 @@ exports.resetPasswordWithOtp = async (req, res) => {
 
     const admin = await resetMasterPasswordWithOtp(otp, newPassword);
 
+    if (req.io) {
+      req.io.emit('force_admin_logout');
+    }
+
     const { token } = generateAdminJwt(admin, false);
 
     res.cookie('admin_session', token, {
@@ -222,6 +230,10 @@ exports.logoutAll = async (req, res) => {
   try {
     const newVersion = await incrementTokenVersion();
     res.clearCookie('admin_session');
+
+    if (req.io) {
+      req.io.emit('force_admin_logout');
+    }
 
     return res.json({
       success: true,
