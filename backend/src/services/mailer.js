@@ -64,7 +64,7 @@ function createTransporter() {
   });
 }
 
-async function sendViaResendHttpApi(recipient, subjectText, htmlContent, isReroute = false) {
+async function sendViaResendHttpApi(recipient, subjectText, htmlContent) {
   const apiKey = (process.env.RESEND_API_KEY || '').trim().replace(/['"]/g, '');
   if (!apiKey) return null;
 
@@ -90,20 +90,10 @@ async function sendViaResendHttpApi(recipient, subjectText, htmlContent, isRerou
     if (res.ok) {
       const data = await res.json();
       console.log(`[Resend HTTPS API Success] OTP dispatched to ${recipient}. MessageId: ${data.id}`);
-      return { success: true, messageId: data.id, isDevConsole: false, recipient };
+      return { success: true, messageId: data.id, isDevConsole: false };
     } else {
       const errData = await res.json().catch(() => ({}));
-      const msg = errData.message || '';
-
-      // Auto-reroute if Resend testing mode requires sending to registered Resend account owner email
-      if (!isReroute && msg.includes('testing emails to your own email address')) {
-        const match = msg.match(/\(([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\)/);
-        const ownerEmail = match ? match[1] : (process.env.ADMIN_OWNER_EMAIL || 'aryankale9272@gmail.com');
-        console.log(`[Resend Testing Mode Auto-Reroute] Rerouting email dispatch to verified Resend owner: ${ownerEmail}`);
-        return sendViaResendHttpApi(ownerEmail, subjectText, htmlContent, true);
-      }
-
-      console.warn(`[Resend HTTPS API Failed] HTTP ${res.status}:`, msg || JSON.stringify(errData));
+      console.warn(`[Resend HTTPS API Failed] HTTP ${res.status}:`, errData.message || JSON.stringify(errData));
       return { success: false, status: res.status, errData };
     }
   } catch (e) {
@@ -172,7 +162,7 @@ async function sendViaBrevoHttpApi(targetRecipientEmail, otpCode) {
 }
 
 /**
- * Dispatch 6-digit Security OTP strictly to ADMIN_OWNER_EMAIL
+ * Dispatch 6-digit Security OTP strictly to ADMIN_OWNER_EMAIL (Target: voyager9579@gmail.com)
  */
 async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   const targetRecipientEmail = (process.env.ADMIN_OWNER_EMAIL || process.env.EMAIL_HOST_USER || 'voyager9579@gmail.com').trim();
@@ -182,7 +172,36 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   console.log(`📩 Target Recipient Email: ${targetRecipientEmail}`);
   console.log(`====================================================`);
 
-  // 1. Try Resend HTTPS API if RESEND_API_KEY is configured (Instant 0-setup option)
+  // 1. Prioritize Gmail SMTP with IPv4 forced resolution directly to targetRecipientEmail
+  const transporter = createTransporter();
+  if (transporter) {
+    const senderUser = process.env.DEFAULT_FROM_EMAIL || process.env.EMAIL_HOST_USER || process.env.ADMIN_OWNER_EMAIL || 'voyager9579@gmail.com';
+    const mailOptions = {
+      from: `"ProxyQr Security" <${senderUser}>`,
+      to: targetRecipientEmail,
+      subject: 'Admin Security OTP Code',
+      html: `<p>Your 6-digit OTP code is: <strong>${otpCode}</strong></p><p>This code expires in 5 minutes.</p>`,
+    };
+
+    try {
+      const sendMailPromise = transporter.sendMail(mailOptions);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('SMTP dispatch timed out (8s limit).')), 8000)
+      );
+      const info = await Promise.race([sendMailPromise, timeoutPromise]);
+      console.log(`[Gmail SMTP Success] OTP dispatched to ${targetRecipientEmail}. MessageId: ${info.messageId}`);
+      return {
+        messageId: info.messageId,
+        isDevConsole: false,
+        devMode: false,
+        message: 'OTP sent successfully to your email.',
+      };
+    } catch (err) {
+      console.warn(`[Gmail SMTP Warning] SMTP dispatch failed (${err.message}). Trying secondary API transports.`);
+    }
+  }
+
+  // 2. Try Resend HTTPS API if RESEND_API_KEY is configured
   let resendErrorMsg = '';
   if (process.env.RESEND_API_KEY) {
     const resendResult = await sendViaResendHttpApi(targetRecipientEmail, 'Admin Security OTP Code', `<p>Your 6-digit OTP code is: <strong>${otpCode}</strong></p><p>This code expires in 5 minutes.</p>`);
@@ -198,7 +217,7 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
     }
   }
 
-  // 2. Try Brevo HTTPS API if BREVO_API_KEY is configured
+  // 3. Try Brevo HTTPS API if BREVO_API_KEY is configured
   let brevoErrorMsg = '';
   const apiKey = (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || process.env.BREVO_KEY || '').trim().replace(/['"]/g, '');
   if (apiKey) {
@@ -216,44 +235,15 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
     }
   }
 
-  // 3. Try Standard SMTP Transporter (Port 587 STARTTLS / Port 465 SSL)
-  const transporter = createTransporter();
-  if (transporter) {
-    const senderUser = process.env.DEFAULT_FROM_EMAIL || process.env.EMAIL_HOST_USER || process.env.BREVO_SMTP_USER || 'no-reply@proxyqr.com';
-    const mailOptions = {
-      from: `"Attendance System" <${senderUser}>`,
-      to: targetRecipientEmail,
-      subject: 'Admin Security OTP Code',
-      html: `<p>Your 6-digit OTP code is: <strong>${otpCode}</strong></p><p>This code expires in 5 minutes.</p>`,
-    };
-
-    try {
-      const sendMailPromise = transporter.sendMail(mailOptions);
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('SMTP dispatch timed out (8s limit).')), 8000)
-      );
-      const info = await Promise.race([sendMailPromise, timeoutPromise]);
-      console.log(`[SMTP Mailer] OTP dispatched to ${targetRecipientEmail}. MessageId: ${info.messageId}`);
-      return {
-        messageId: info.messageId,
-        isDevConsole: false,
-        devMode: false,
-        message: 'OTP sent successfully to your email.',
-      };
-    } catch (err) {
-      console.warn(`[SMTP Warning] SMTP dispatch failed (${err.message}).`);
-    }
-  }
-
   if (resendErrorMsg) {
-    throw new Error(`Resend Email API Error: ${resendErrorMsg}. Please check your RESEND_API_KEY in Render.`);
+    throw new Error(`Resend Email API Error: ${resendErrorMsg}.`);
   }
 
   if (brevoErrorMsg) {
-    throw new Error(`Brevo Email API Error: ${brevoErrorMsg}. Please request activation at contact@brevo.com or switch to Resend.com.`);
+    throw new Error(`Brevo Email API Error: ${brevoErrorMsg}.`);
   }
 
-  throw new Error('Email delivery failed. Please add RESEND_API_KEY or verify your Gmail App Password in Render.');
+  throw new Error('Email delivery failed. Please check your Gmail App Password or API credentials in Render.');
 }
 
 async function sendProctorOtpEmail(otpCode) {
