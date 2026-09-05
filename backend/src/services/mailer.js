@@ -25,16 +25,20 @@ function createTransporter() {
   if (isGmail) {
     return nodemailer.createTransport({
       host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
+      port: 587,
+      secure: false, // Port 587 uses STARTTLS
       auth: {
         user,
         pass,
       },
-      family: 4, // Force IPv4 socket connection
-      lookup: customIpv4Lookup, // Guarantee strict IPv4 resolution (bypasses ENETUNREACH IPv6 cloud errors on Render)
-      connectionTimeout: 8000,
-      greetingTimeout: 5000,
+      tls: {
+        ciphers: 'SSLv3',
+        rejectUnauthorized: false,
+      },
+      family: 4, // Force IPv4 resolution to bypass ENETUNREACH
+      lookup: customIpv4Lookup, // Guarantee strict IPv4 resolution
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
       socketTimeout: 10000,
     });
   }
@@ -48,11 +52,14 @@ function createTransporter() {
     port,
     secure,
     auth: { user, pass },
-    tls: { rejectUnauthorized: false },
-    family: 4, // Force IPv4 socket connection
+    tls: {
+      ciphers: 'SSLv3',
+      rejectUnauthorized: false,
+    },
+    family: 4, // Force IPv4 resolution
     lookup: customIpv4Lookup,
     connectionTimeout: 10000,
-    greetingTimeout: 8000,
+    greetingTimeout: 10000,
     socketTimeout: 10000,
   });
 }
@@ -82,16 +89,9 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   console.log(`📩 Target Recipient Email: ${recipient}`);
   console.log(`====================================================`);
 
-  const rawPass = process.env.EMAIL_HOST_PASSWORD || process.env.BREVO_SMTP_KEY || '';
-  const pass = rawPass.trim().replace(/\s+/g, '');
+  const transporter = createTransporter();
 
   // DEV MODE Console Fallback ONLY if SMTP password is missing
-  if (!pass) {
-    console.log(`[DEV MODE] OTP sent to console: ${otpCode}`);
-    return { messageId: 'local-console-fallback', isDevConsole: true };
-  }
-
-  const transporter = createTransporter();
   if (!transporter) {
     console.log(`[DEV MODE] OTP sent to console: ${otpCode}`);
     return { messageId: 'local-console-fallback', isDevConsole: true };
@@ -103,23 +103,25 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
     <head>
       <meta charset="utf-8">
       <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #030712; color: #f8fafc; margin: 0; padding: 40px 20px; }
-        .container { max-width: 500px; margin: 0 auto; background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(6, 182, 212, 0.4); border-radius: 24px; padding: 32px; box-shadow: 0 0 50px rgba(6, 182, 212, 0.2); }
-        .logo { font-size: 24px; font-weight: 800; color: #38bdf8; text-align: center; margin-bottom: 8px; letter-spacing: -0.5px; }
-        .subtitle { font-size: 12px; color: #94a3b8; text-align: center; font-family: monospace; margin-bottom: 24px; letter-spacing: 1px; }
-        .otp-box { background: rgba(15, 23, 42, 0.9); border-radius: 16px; padding: 20px; text-align: center; margin: 24px 0; border: 1px solid rgba(6, 182, 212, 0.4); }
-        .otp-code { font-size: 36px; font-weight: 900; letter-spacing: 8px; color: #22d3ee; font-family: monospace; }
-        .badge { display: inline-block; background: rgba(16, 185, 129, 0.15); color: #34d399; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 20px; border: 1px solid rgba(16, 185, 129, 0.3); margin-top: 8px; }
-        .footer { font-size: 11px; color: #64748b; text-align: center; margin-top: 24px; font-family: monospace; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #090d16; color: #f8fafc; margin: 0; padding: 20px; }
+        .card { max-width: 480px; margin: 0 auto; background: #0f172a; border: 1px solid #1e293b; border-radius: 16px; padding: 32px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        .title { color: #38bdf8; font-size: 20px; font-weight: 700; text-align: center; margin-bottom: 8px; letter-spacing: 0.5px; }
+        .subtitle { color: #94a3b8; font-size: 11px; text-align: center; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 24px; }
+        .otp-box { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0; }
+        .otp-code { font-size: 36px; font-weight: 800; color: #38bdf8; letter-spacing: 8px; font-family: monospace; }
+        .badge { display: inline-block; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8; font-size: 11px; padding: 4px 12px; border-radius: 9999px; margin-top: 10px; font-weight: 600; }
+        .footer { font-size: 11px; color: #64748b; text-align: center; margin-top: 24px; border-top: 1px solid #1e293b; padding-top: 16px; }
       </style>
     </head>
     <body>
-      <div class="container">
-        <div class="logo">ProxyQr Admin Console</div>
+      <div class="card">
+        <div class="title">ProxyQr Admin Console</div>
         <div class="subtitle">${title}</div>
-        
-        <p style="font-size: 14px; color: #cbd5e1; text-align: center;">${actionText}</p>
-        
+
+        <p style="font-size: 14px; color: #cbd5e1; line-height: 1.5;">
+          ${actionText}
+        </p>
+
         <div class="otp-box">
           <div class="otp-code">${otpCode}</div>
           <div class="badge">VALID FOR 5 MINUTES</div>
@@ -149,14 +151,24 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   try {
     const sendMailPromise = transporter.sendMail(mailOptions);
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('SMTP dispatch timed out (12s limit).')), 12000)
+      setTimeout(() => reject(new Error('SMTP dispatch timed out (10s limit).')), 10000)
     );
     const info = await Promise.race([sendMailPromise, timeoutPromise]);
     console.log(`[SMTP Mailer] OTP dispatched to ${recipient}. MessageId: ${info.messageId}`);
     return { messageId: info.messageId, isDevConsole: false };
   } catch (err) {
     console.error(`[SMTP Error] Failed to send email via Gmail SMTP:`, err);
-    throw new Error(`Gmail SMTP dispatch error: ${err.message}. Please verify your Gmail App Password.`);
+    const msg = err.message || '';
+    const code = err.code || '';
+
+    // Distinguish between authentication errors vs network/socket timeouts
+    if (code === 'EAUTH' || msg.includes('535') || msg.includes('Invalid login') || msg.includes('Username and Password not accepted')) {
+      throw new Error('Gmail Authentication Failed: Invalid Email or App Password. Please check your Gmail App Password in environment variables.');
+    } else if (code === 'ENETUNREACH' || code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || msg.includes('ENETUNREACH') || msg.includes('timed out')) {
+      throw new Error(`Gmail Network Connection Timeout (${code || 'ENETUNREACH'}). Cloud host could not reach Gmail SMTP. Please try again.`);
+    } else {
+      throw new Error(`Gmail SMTP dispatch error: ${msg}`);
+    }
   }
 }
 
