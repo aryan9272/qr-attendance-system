@@ -22,7 +22,7 @@ import { useSocket } from '../context/SocketContext';
 export default function Navbar() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { connected, backendUrl, joinSession } = useSocket();
+  const { connected, backendUrl, joinSession, socket } = useSocket();
 
   const [adminUser, setAdminUser] = useState(null);
   const [unterminatedSessions, setUnterminatedSessions] = useState([]);
@@ -41,6 +41,19 @@ export default function Navbar() {
   const isAdminRoute = location.pathname.startsWith('/admin') || location.pathname === '/';
   const isLoginPage = location.pathname === '/admin/login';
 
+  const purgeLocalSession = (reasonMessage) => {
+    localStorage.removeItem('admin_token');
+    localStorage.removeItem('admin_user');
+    sessionStorage.clear();
+    if (reasonMessage) {
+      sessionStorage.setItem('logout_notice', reasonMessage);
+    }
+    setAdminUser(null);
+    if (location.pathname !== '/admin/login') {
+      navigate('/admin/login', { replace: true });
+    }
+  };
+
   const checkAdminSession = async () => {
     try {
       const stored = localStorage.getItem('admin_user');
@@ -58,6 +71,13 @@ export default function Navbar() {
           },
         });
         const data = await res.json();
+
+        if (res.status === 401 || !data?.success) {
+          console.warn('[Navbar] Session revoked or invalid token (401). Purging local session.');
+          purgeLocalSession('Your session was revoked because an admin executed "Logout All Devices".');
+          return;
+        }
+
         if (data?.success && data?.admin) {
           setAdminUser(data.admin);
           localStorage.setItem('admin_user', JSON.stringify(data.admin));
@@ -73,7 +93,45 @@ export default function Navbar() {
 
   useEffect(() => {
     checkAdminSession();
+
+    const handleFocus = () => checkAdminSession();
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('visibilitychange', handleFocus);
+
+    const handleSessionInvalidated = (e) => {
+      console.warn('[Navbar] Received admin-session-invalidated event.');
+      purgeLocalSession(e?.detail?.message || 'Session invalidated. Please log in again.');
+    };
+    window.addEventListener('admin-session-invalidated', handleSessionInvalidated);
+
+    const intervalId = setInterval(() => {
+      if (localStorage.getItem('admin_token')) {
+        checkAdminSession();
+      }
+    }, 10000);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('visibilitychange', handleFocus);
+      window.removeEventListener('admin-session-invalidated', handleSessionInvalidated);
+      clearInterval(intervalId);
+    };
   }, [location.pathname, backendUrl]);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleGlobalLogoutBroadcast = (data) => {
+      console.log('[Navbar] Received real-time admin:logout-all socket broadcast:', data);
+      purgeLocalSession(data?.message || 'All active sessions were logged out globally by admin.');
+    };
+
+    socket.on('admin:logout-all', handleGlobalLogoutBroadcast);
+
+    return () => {
+      socket.off('admin:logout-all', handleGlobalLogoutBroadcast);
+    };
+  }, [socket, location.pathname]);
 
   const handleLogout = async () => {
     try {
@@ -110,11 +168,7 @@ export default function Navbar() {
     } finally {
       setIsLoggingOutAll(false);
       setIsLogoutAllModalOpen(false);
-      localStorage.removeItem('admin_token');
-      localStorage.removeItem('admin_user');
-      sessionStorage.clear();
-      setAdminUser(null);
-      navigate('/admin/login');
+      purgeLocalSession('Global Logout successful. All active sessions across devices have been terminated.');
     }
   };
 

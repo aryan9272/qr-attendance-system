@@ -38,6 +38,13 @@ export async function fetchWithFailover(path, options = {}) {
       }
 
       const data = await res.json();
+
+      if (res.status === 401 && (data?.error === 'INVALID_SESSION' || data?.error === 'UNAUTHORIZED_ACCESS' || path.includes('/api/admin'))) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('admin-session-invalidated', { detail: data }));
+        }
+      }
+
       return { res, data, baseUrl: base };
     } catch (err) {
       lastError = err;

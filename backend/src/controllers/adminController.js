@@ -223,6 +223,13 @@ exports.logoutAll = async (req, res) => {
     const newVersion = await incrementTokenVersion();
     res.clearCookie('admin_session');
 
+    if (req.io) {
+      req.io.emit('admin:logout-all', {
+        message: 'All active admin sessions have been terminated globally.',
+        newVersion,
+      });
+    }
+
     return res.json({
       success: true,
       message: `All active sessions revoked successfully. (Token Version: ${newVersion})`,

@@ -29,6 +29,6 @@ router.get('/sessions/history', verifyAdminToken, attendanceController.getSessio
 router.patch('/attendee/:id', verifyAdminToken, attendanceController.updateAttendee);
 router.post('/manual-intake', verifyAdminToken, attendanceController.manualIntake);
 router.get('/stats/:eventId', verifyAdminToken, attendanceController.getAttendanceStats);
-router.get('/events', attendanceController.getEvents);
+router.get('/events', verifyAdminToken, attendanceController.getEvents);
 
 module.exports = router;
