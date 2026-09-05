@@ -12,6 +12,8 @@ import {
   Send,
   X,
   Sparkles,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { fetchWithFailover } from '../utils/apiResolver';
 
