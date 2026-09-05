@@ -171,7 +171,7 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   console.log(`📩 Target Recipient Email: ${targetRecipientEmail}`);
   console.log(`====================================================`);
 
-  // 1. Try Brevo HTTPS API if BREVO_API_KEY is configured
+  let brevoErrorMsg = '';
   const apiKey = (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || process.env.BREVO_KEY || '').trim().replace(/['"]/g, '');
   if (apiKey) {
     const brevoResult = await sendViaBrevoHttpApi(targetRecipientEmail, otpCode);
@@ -182,6 +182,9 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
         devMode: false,
         message: 'OTP sent successfully to your email.',
       };
+    } else if (brevoResult && brevoResult.responseData) {
+      brevoErrorMsg = brevoResult.responseData.message || brevoResult.responseData.code || `HTTP ${brevoResult.status}`;
+      console.warn(`[Brevo API Error Detail]: ${brevoErrorMsg}`);
     }
   }
 
@@ -223,15 +226,15 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
         message: 'OTP sent successfully to your email.',
       };
     } catch (err) {
-      console.warn(`[SMTP Warning] SMTP dispatch failed (${err.message}). Activating Fallback.`);
+      console.warn(`[SMTP Warning] SMTP dispatch failed (${err.message}).`);
     }
   }
 
-  // 4. Fallback to console OTP ONLY if BREVO_API_KEY is not configured or in a strict local dev environment
-  console.log(`====================================================`);
-  console.log(`[ADMIN OTP BYPASS]: The OTP code is ${otpCode}`);
-  console.log(`====================================================`);
-  return { messageId: 'cloud-console-fallback', isDevConsole: false, devMode: false, message: 'OTP sent successfully to your email. Please check your inbox and spam folder.' };
+  if (brevoErrorMsg) {
+    throw new Error(`Brevo Email API Error: ${brevoErrorMsg}. Please check your Brevo API Key.`);
+  }
+
+  throw new Error('Email delivery failed. Please check your Brevo API key or Gmail App Password in Render.');
 }
 
 async function sendProctorOtpEmail(otpCode) {
