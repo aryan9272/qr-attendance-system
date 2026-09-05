@@ -94,6 +94,9 @@ async function sendViaBrevoHttpApi(recipient, subjectText, htmlContent) {
       const data = await res.json();
       console.log(`[Brevo HTTPS API] OTP dispatched to ${recipient}. MessageId: ${data.messageId || 'http-api'}`);
       return { messageId: data.messageId || 'http-api', isDevConsole: false };
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      console.warn(`[Brevo HTTPS API Failed] HTTP ${res.status}:`, errData.message || JSON.stringify(errData));
     }
   } catch (e) {
     clearTimeout(timeoutId);
