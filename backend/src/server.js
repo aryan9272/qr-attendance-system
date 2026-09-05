@@ -4,8 +4,12 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const dotenv = require('dotenv');
+const path = require('path');
 
+// Load environment variables from both root and backend directory
 dotenv.config();
+dotenv.config({ path: path.join(__dirname, '../.env') });
+dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 const { connectDB } = require('./config/db');
 const attendanceRoutes = require('./routes/attendanceRoutes');

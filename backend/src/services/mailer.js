@@ -1,8 +1,9 @@
 const nodemailer = require('nodemailer');
 
 function createTransporter() {
-  const user = process.env.EMAIL_HOST_USER || process.env.ADMIN_OWNER_EMAIL || process.env.BREVO_SMTP_USER;
-  const pass = process.env.EMAIL_HOST_PASSWORD || process.env.BREVO_SMTP_KEY;
+  const user = (process.env.EMAIL_HOST_USER || process.env.ADMIN_OWNER_EMAIL || process.env.BREVO_SMTP_USER || '').trim();
+  const rawPass = process.env.EMAIL_HOST_PASSWORD || process.env.BREVO_SMTP_KEY || '';
+  const pass = rawPass.trim().replace(/\s+/g, '');
   const host = process.env.EMAIL_HOST || (process.env.BREVO_SMTP_USER ? 'smtp-relay.brevo.com' : 'smtp.gmail.com');
   const port = parseInt(process.env.EMAIL_PORT || '587', 10);
   const secure = port === 465;
@@ -33,7 +34,7 @@ function createTransporter() {
  * Dispatch 6-digit Security OTP strictly to ADMIN_OWNER_EMAIL
  */
 async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
-  const recipient = process.env.ADMIN_OWNER_EMAIL || process.env.EMAIL_HOST_USER || 'voyager9579@gmail.com';
+  const recipient = (process.env.ADMIN_OWNER_EMAIL || process.env.EMAIL_HOST_USER || 'voyager9579@gmail.com').trim();
 
   let title = 'DELEGATED PROCTOR OTP VERIFICATION';
   let subjectText = `🔐 ProxyQr Proctor Access OTP: ${otpCode}`;
@@ -54,7 +55,8 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   console.log(`📩 Target Recipient Email: ${recipient}`);
   console.log(`====================================================`);
 
-  const pass = process.env.EMAIL_HOST_PASSWORD || process.env.BREVO_SMTP_KEY;
+  const rawPass = process.env.EMAIL_HOST_PASSWORD || process.env.BREVO_SMTP_KEY || '';
+  const pass = rawPass.trim().replace(/\s+/g, '');
 
   // DEV MODE Console Fallback if SMTP password is missing
   if (!pass) {
