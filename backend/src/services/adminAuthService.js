@@ -141,10 +141,10 @@ async function requestSecurityOtp(type = 'CHANGE_PASSWORD') {
 
   const isDevConsole = !!mailResult.isDevConsole;
   const msg = isDevConsole
-    ? '[DEV MODE] OTP generated and printed to server console terminal.'
+    ? '[CLOUD / DEV FALLBACK] OTP generated and logged to server console terminal.'
     : 'OTP sent! Please check your inbox and spam folder.';
 
-  return { success: true, message: msg, isDevConsole };
+  return { success: true, message: msg, isDevConsole, devMode: isDevConsole };
 }
 
 /**

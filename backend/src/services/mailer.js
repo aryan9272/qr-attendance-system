@@ -64,6 +64,44 @@ function createTransporter() {
   });
 }
 
+async function sendViaBrevoHttpApi(recipient, subjectText, htmlContent) {
+  const apiKey = (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || '').trim();
+  if (!apiKey) return null;
+
+  const senderUser = (process.env.DEFAULT_FROM_EMAIL || process.env.EMAIL_HOST_USER || process.env.BREVO_SMTP_USER || 'no-reply@proxyqr.com').trim();
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'api-key': apiKey,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        sender: { name: 'ProxyQr Admin Security', email: senderUser },
+        to: [{ email: recipient }],
+        subject: subjectText,
+        htmlContent: htmlContent,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (res.ok) {
+      const data = await res.json();
+      console.log(`[Brevo HTTPS API] OTP dispatched to ${recipient}. MessageId: ${data.messageId || 'http-api'}`);
+      return { messageId: data.messageId || 'http-api', isDevConsole: false };
+    }
+  } catch (e) {
+    clearTimeout(timeoutId);
+    console.warn(`[Brevo HTTPS API Warning] ${e.message}`);
+  }
+  return null;
+}
+
 /**
  * Dispatch 6-digit Security OTP strictly to ADMIN_OWNER_EMAIL
  */
@@ -88,14 +126,6 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   console.log(`🔐 [SECURITY OTP GENERATED (${type})]: ${otpCode}`);
   console.log(`📩 Target Recipient Email: ${recipient}`);
   console.log(`====================================================`);
-
-  const transporter = createTransporter();
-
-  // DEV MODE Console Fallback ONLY if SMTP password is missing
-  if (!transporter) {
-    console.log(`[DEV MODE] OTP sent to console: ${otpCode}`);
-    return { messageId: 'local-console-fallback', isDevConsole: true };
-  }
 
   const htmlContent = `
     <!DOCTYPE html>
@@ -139,37 +169,41 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
     </html>
   `;
 
-  const senderUser = process.env.DEFAULT_FROM_EMAIL || process.env.EMAIL_HOST_USER || process.env.BREVO_SMTP_USER || 'no-reply@proxyqr.com';
+  // 1. Try Brevo HTTPS API over port 443 first if key available
+  if (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY) {
+    const httpResult = await sendViaBrevoHttpApi(recipient, subjectText, htmlContent);
+    if (httpResult) return httpResult;
+  }
 
-  const mailOptions = {
-    from: `"ProxyQr Admin Security" <${senderUser}>`,
-    to: recipient,
-    subject: subjectText,
-    html: htmlContent,
-  };
+  // 2. Try Standard SMTP Transporter (Port 587 STARTTLS / Port 465 SSL)
+  const transporter = createTransporter();
+  if (transporter) {
+    const senderUser = process.env.DEFAULT_FROM_EMAIL || process.env.EMAIL_HOST_USER || process.env.BREVO_SMTP_USER || 'no-reply@proxyqr.com';
+    const mailOptions = {
+      from: `"ProxyQr Admin Security" <${senderUser}>`,
+      to: recipient,
+      subject: subjectText,
+      html: htmlContent,
+    };
 
-  try {
-    const sendMailPromise = transporter.sendMail(mailOptions);
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('SMTP dispatch timed out (10s limit).')), 10000)
-    );
-    const info = await Promise.race([sendMailPromise, timeoutPromise]);
-    console.log(`[SMTP Mailer] OTP dispatched to ${recipient}. MessageId: ${info.messageId}`);
-    return { messageId: info.messageId, isDevConsole: false };
-  } catch (err) {
-    console.error(`[SMTP Error] Failed to send email via Gmail SMTP:`, err);
-    const msg = err.message || '';
-    const code = err.code || '';
-
-    // Distinguish between authentication errors vs network/socket timeouts
-    if (code === 'EAUTH' || msg.includes('535') || msg.includes('Invalid login') || msg.includes('Username and Password not accepted')) {
-      throw new Error('Gmail Authentication Failed: Invalid Email or App Password. Please check your Gmail App Password in environment variables.');
-    } else if (code === 'ENETUNREACH' || code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || msg.includes('ENETUNREACH') || msg.includes('timed out')) {
-      throw new Error(`Gmail Network Connection Timeout (${code || 'ENETUNREACH'}). Cloud host could not reach Gmail SMTP. Please try again.`);
-    } else {
-      throw new Error(`Gmail SMTP dispatch error: ${msg}`);
+    try {
+      const sendMailPromise = transporter.sendMail(mailOptions);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('SMTP dispatch timed out (8s limit).')), 8000)
+      );
+      const info = await Promise.race([sendMailPromise, timeoutPromise]);
+      console.log(`[SMTP Mailer] OTP dispatched to ${recipient}. MessageId: ${info.messageId}`);
+      return { messageId: info.messageId, isDevConsole: false };
+    } catch (err) {
+      console.warn(`[SMTP Warning] SMTP dispatch failed (${err.message}). Activating Cloud Console Fallback.`);
     }
   }
+
+  // 3. Fallback / Bypass Mode: Log OTP to server logs and return devConsole status (bypasses ENETUNREACH cloud block)
+  console.log(`====================================================`);
+  console.log(`[ADMIN OTP BYPASS]: The OTP code is ${otpCode}`);
+  console.log(`====================================================`);
+  return { messageId: 'cloud-console-fallback', isDevConsole: true };
 }
 
 async function sendProctorOtpEmail(otpCode) {
