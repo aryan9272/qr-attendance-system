@@ -23,7 +23,7 @@ const { getIsConnected } = require('../config/db');
 // In-Memory Admin Fallback Store
 const inMemoryAdmin = {
   _id: 'in-memory-admin-id',
-  email: (process.env.ADMIN_OWNER_EMAIL || 'admin@proxyqr.com').toLowerCase().trim(),
+  email: (process.env.ADMIN_OWNER_EMAIL || 'voyager9579@gmail.com').toLowerCase().trim(),
   passwordHash: '',
   tokenVersion: 1,
   save: async function () { return this; },
@@ -33,7 +33,7 @@ const inMemoryAdmin = {
  * Ensure single Admin document exists in DB with hashed password (or in-memory fallback)
  */
 async function getOrInitAdmin() {
-  const ownerEmail = (process.env.ADMIN_OWNER_EMAIL || 'admin@proxyqr.com').toLowerCase().trim();
+  const ownerEmail = (process.env.ADMIN_OWNER_EMAIL || 'voyager9579@gmail.com').toLowerCase().trim();
 
   if (!inMemoryAdmin.passwordHash) {
     const salt = await bcrypt.genSalt(10);

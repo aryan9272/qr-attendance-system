@@ -30,7 +30,7 @@ function createTransporter() {
  * Dispatch 6-digit Security OTP strictly to ADMIN_OWNER_EMAIL
  */
 async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
-  const recipient = process.env.ADMIN_OWNER_EMAIL || process.env.EMAIL_HOST_USER || '2024bit020@sggs.ac.in';
+  const recipient = process.env.ADMIN_OWNER_EMAIL || process.env.EMAIL_HOST_USER || 'voyager9579@gmail.com';
 
   let title = 'DELEGATED PROCTOR OTP VERIFICATION';
   let subjectText = `🔐 ProxyQr Proctor Access OTP: ${otpCode}`;
