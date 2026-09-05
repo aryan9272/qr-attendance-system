@@ -14,6 +14,8 @@ import {
   Sparkles,
   Eye,
   EyeOff,
+  ShieldAlert,
+  RefreshCw,
 } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
 
@@ -25,6 +27,8 @@ export default function Navbar() {
   const [adminUser, setAdminUser] = useState(null);
   const [unterminatedSessions, setUnterminatedSessions] = useState([]);
   const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false);
+  const [isLogoutAllModalOpen, setIsLogoutAllModalOpen] = useState(false);
+  const [isLoggingOutAll, setIsLoggingOutAll] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
@@ -74,34 +78,44 @@ export default function Navbar() {
   const handleLogout = async () => {
     try {
       const token = localStorage.getItem('admin_token');
-      await fetch(`${backendUrl}/api/admin/auth/logout`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
-      }).catch(() => {});
-    } catch (e) {}
-
-    localStorage.removeItem('admin_token');
-    localStorage.removeItem('admin_user');
-    sessionStorage.clear();
-    setAdminUser(null);
-    navigate('/admin/login');
+      if (token) {
+        await fetch(`${backendUrl}/api/admin/auth/logout`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('[Navbar] Logout error:', e);
+    } finally {
+      localStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_user');
+      sessionStorage.clear();
+      setAdminUser(null);
+      navigate('/admin/login');
+    }
   };
 
-  const handleLogoutAll = async () => {
-    if (!window.confirm('Are you sure you want to revoke all active sessions across all devices?')) return;
-
+  const handleConfirmLogoutAll = async () => {
+    setIsLoggingOutAll(true);
     try {
       const token = localStorage.getItem('admin_token');
-      await fetch(`${backendUrl}/api/admin/auth/logout-all`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
-      });
-      alert('All active admin sessions have been revoked.');
+      if (token) {
+        await fetch(`${backendUrl}/api/admin/auth/logout-all`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
+        }).catch(() => {});
+      }
     } catch (e) {
-      alert('Error revoking sessions: ' + e.message);
+      console.error('[Navbar] Global logout error:', e);
+    } finally {
+      setIsLoggingOutAll(false);
+      setIsLogoutAllModalOpen(false);
+      localStorage.removeItem('admin_token');
+      localStorage.removeItem('admin_user');
+      sessionStorage.clear();
+      setAdminUser(null);
+      navigate('/admin/login');
     }
-
-    handleLogout();
   };
 
   const [otpCode, setOtpCode] = useState('');
@@ -283,28 +297,28 @@ export default function Navbar() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setIsChangePasswordModalOpen(true)}
-                    className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 border border-slate-800 transition-colors cursor-pointer"
+                    className="p-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 border border-slate-800 transition-colors cursor-pointer"
                     title="Change Master Password"
                   >
                     <KeyRound className="w-4 h-4" />
                   </button>
 
                   <button
-                    onClick={handleLogoutAll}
-                    className="hidden sm:flex items-center gap-1 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-mono font-bold transition-colors cursor-pointer"
+                    onClick={() => setIsLogoutAllModalOpen(true)}
+                    className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-slate-700 text-xs font-mono font-medium transition-colors cursor-pointer"
                     title="Revoke all active sessions across devices"
                   >
-                    <Lock className="w-3 h-3" />
+                    <Lock className="w-3.5 h-3.5 text-slate-400" />
                     <span>Logout All</span>
                   </button>
 
                   <button
                     onClick={handleLogout}
-                    className="p-2 sm:px-3 sm:py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-800 text-xs font-mono transition-colors cursor-pointer flex items-center gap-1.5"
-                    title="Log Out"
+                    className="px-3.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-mono font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-sm hover:border-rose-500/50"
+                    title="Log Out (Current Device)"
                   >
-                    <LogOut className="w-4 h-4" />
-                    <span className="hidden sm:inline">Logout</span>
+                    <LogOut className="w-4 h-4 text-rose-400" />
+                    <span>Logout</span>
                   </button>
                 </div>
               )}
@@ -459,6 +473,65 @@ export default function Navbar() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Global Logout Modal */}
+      {isLogoutAllModalOpen && (
+        <div className="fixed inset-0 z-[99995] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="glass-panel p-6 sm:p-7 rounded-3xl max-w-md w-full space-y-5 border-rose-500/40 shadow-[0_0_50px_rgba(244,63,94,0.2)]">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-white font-display font-bold text-base">
+                <ShieldAlert className="w-5 h-5 text-rose-400" />
+                <span>Confirm Global Logout</span>
+              </div>
+              <button
+                onClick={() => setIsLogoutAllModalOpen(false)}
+                disabled={isLoggingOutAll}
+                className="p-1 rounded-xl bg-slate-900 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs font-mono text-slate-300 leading-relaxed">
+                Are you sure you want to terminate all active sessions? Admins signed in from other lab terminals will be logged out immediately.
+              </p>
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-[11px] font-mono font-medium">
+                ⚠️ Action Notice: All device tokens will be invalidated across all active terminals.
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-3 font-mono text-xs">
+              <button
+                type="button"
+                onClick={() => setIsLogoutAllModalOpen(false)}
+                disabled={isLoggingOutAll}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmLogoutAll}
+                disabled={isLoggingOutAll}
+                className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold transition-all shadow-lg shadow-rose-900/40 cursor-pointer flex items-center gap-2 disabled:opacity-50"
+              >
+                {isLoggingOutAll ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Revoking Sessions...</span>
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-4 h-4" />
+                    <span>Logout All Devices</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
