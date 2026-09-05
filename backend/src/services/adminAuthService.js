@@ -141,10 +141,10 @@ async function requestSecurityOtp(type = 'CHANGE_PASSWORD') {
 
   const isDevConsole = !!mailResult.isDevConsole;
   const msg = isDevConsole
-    ? '[CLOUD / DEV FALLBACK] OTP generated and logged to server console terminal.'
+    ? `[DEV / CLOUD FALLBACK] Your OTP Code is: ${numericOtp}`
     : 'OTP sent! Please check your inbox and spam folder.';
 
-  return { success: true, message: msg, isDevConsole, devMode: isDevConsole };
+  return { success: true, message: msg, isDevConsole, devMode: isDevConsole, devOtpCode: isDevConsole ? numericOtp : undefined };
 }
 
 /**
