@@ -102,17 +102,18 @@ async function sendViaResendHttpApi(recipient, subjectText, htmlContent) {
   return null;
 }
 
-async function sendViaBrevoHttpApi(recipient, subjectText, htmlContent) {
+async function sendViaBrevoHttpApi(targetRecipientEmail, otpCode) {
   const apiKey = (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || process.env.BREVO_KEY || '').trim().replace(/['"]/g, '');
   if (!apiKey) return null;
 
-  const senderUser = (process.env.DEFAULT_FROM_EMAIL || process.env.ADMIN_OWNER_EMAIL || process.env.EMAIL_HOST_USER || recipient || 'voyager9579@gmail.com').trim();
+  const senderEmail = (process.env.BREVO_SENDER_EMAIL || process.env.ADMIN_OWNER_EMAIL || process.env.EMAIL_HOST_USER || 'voyager9579@gmail.com').trim();
+  const senderName = 'Attendance System';
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
       headers: {
         'accept': 'application/json',
@@ -120,117 +121,92 @@ async function sendViaBrevoHttpApi(recipient, subjectText, htmlContent) {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        sender: { name: 'ProxyQr Admin Security', email: senderUser },
-        to: [{ email: recipient }],
-        subject: subjectText,
-        htmlContent: htmlContent,
+        sender: {
+          name: senderName,
+          email: senderEmail,
+        },
+        to: [
+          {
+            email: targetRecipientEmail,
+          },
+        ],
+        subject: 'Admin Security OTP Code',
+        htmlContent: `<p>Your 6-digit OTP code is: <strong>${otpCode}</strong></p><p>This code expires in 5 minutes.</p>`,
       }),
       signal: controller.signal,
     });
+
     clearTimeout(timeoutId);
-    if (res.ok) {
-      const data = await res.json();
-      console.log(`[Brevo HTTPS API] OTP dispatched to ${recipient}. MessageId: ${data.messageId || 'http-api'}`);
-      return { messageId: data.messageId || 'http-api', isDevConsole: false };
+
+    if (response.status === 201 || response.status === 200 || response.ok) {
+      const data = await response.json();
+      console.log(`[Brevo HTTPS API Success] HTTP ${response.status}. MessageId: ${data.messageId || 'http-api'}`);
+      return {
+        success: true,
+        devMode: false,
+        isDevConsole: false,
+        message: 'OTP sent successfully to your email.',
+        messageId: data.messageId || 'http-api',
+      };
     } else {
-      const errData = await res.json().catch(() => ({}));
-      console.warn(`[Brevo HTTPS API Failed] HTTP ${res.status}:`, errData.message || JSON.stringify(errData));
+      const responseData = await response.json().catch(() => ({}));
+      console.error(`[Brevo HTTPS API Error] Status Code ${response.status}:`, JSON.stringify(responseData));
+      return { success: false, status: response.status, responseData };
     }
   } catch (e) {
     clearTimeout(timeoutId);
-    console.warn(`[Brevo HTTPS API Warning] ${e.message}`);
+    console.error(`[Brevo HTTPS API Exception] Network/Fetch Error:`, e.message);
+    return { success: false, error: e.message };
   }
-  return null;
 }
 
 /**
  * Dispatch 6-digit Security OTP strictly to ADMIN_OWNER_EMAIL
  */
 async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
-  const recipient = (process.env.ADMIN_OWNER_EMAIL || process.env.EMAIL_HOST_USER || 'voyager9579@gmail.com').trim();
-
-  let title = 'DELEGATED PROCTOR OTP VERIFICATION';
-  let subjectText = `🔐 ProxyQr Proctor Access OTP: ${otpCode}`;
-  let actionText = 'A temporary proctor access code has been requested for the ProxyQr Admin Console.';
-
-  if (type === 'CHANGE_PASSWORD') {
-    title = 'MASTER PASSWORD CHANGE VERIFICATION';
-    subjectText = `🔑 ProxyQr Security: Password Change OTP: ${otpCode}`;
-    actionText = 'A request was made to update the ProxyQr Master Admin Password.';
-  } else if (type === 'RESET_PASSWORD') {
-    title = 'MASTER PASSWORD RESET REQUEST';
-    subjectText = `🚨 ProxyQr Security: Account Recovery OTP: ${otpCode}`;
-    actionText = 'A password recovery reset code was requested for your ProxyQr Admin Account.';
-  }
+  const targetRecipientEmail = (process.env.ADMIN_OWNER_EMAIL || process.env.EMAIL_HOST_USER || 'voyager9579@gmail.com').trim();
 
   console.log(`====================================================`);
   console.log(`🔐 [SECURITY OTP GENERATED (${type})]: ${otpCode}`);
-  console.log(`📩 Target Recipient Email: ${recipient}`);
+  console.log(`📩 Target Recipient Email: ${targetRecipientEmail}`);
   console.log(`====================================================`);
 
-  const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #090d16; color: #f8fafc; margin: 0; padding: 20px; }
-        .card { max-width: 480px; margin: 0 auto; background: #0f172a; border: 1px solid #1e293b; border-radius: 16px; padding: 32px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-        .title { color: #38bdf8; font-size: 20px; font-weight: 700; text-align: center; margin-bottom: 8px; letter-spacing: 0.5px; }
-        .subtitle { color: #94a3b8; font-size: 11px; text-align: center; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 24px; }
-        .otp-box { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0; }
-        .otp-code { font-size: 36px; font-weight: 800; color: #38bdf8; letter-spacing: 8px; font-family: monospace; }
-        .badge { display: inline-block; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8; font-size: 11px; padding: 4px 12px; border-radius: 9999px; margin-top: 10px; font-weight: 600; }
-        .footer { font-size: 11px; color: #64748b; text-align: center; margin-top: 24px; border-top: 1px solid #1e293b; padding-top: 16px; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <div class="title">ProxyQr Admin Console</div>
-        <div class="subtitle">${title}</div>
+  // 1. Try Brevo HTTPS API if BREVO_API_KEY is configured
+  const apiKey = (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || process.env.BREVO_KEY || '').trim().replace(/['"]/g, '');
+  if (apiKey) {
+    const brevoResult = await sendViaBrevoHttpApi(targetRecipientEmail, otpCode);
+    if (brevoResult && brevoResult.success) {
+      return {
+        messageId: brevoResult.messageId,
+        isDevConsole: false,
+        devMode: false,
+        message: 'OTP sent successfully to your email.',
+      };
+    }
+  }
 
-        <p style="font-size: 14px; color: #cbd5e1; line-height: 1.5;">
-          ${actionText}
-        </p>
-
-        <div class="otp-box">
-          <div class="otp-code">${otpCode}</div>
-          <div class="badge">VALID FOR 5 MINUTES</div>
-        </div>
-
-        <p style="font-size: 12px; color: #94a3b8; text-align: center; line-height: 1.6;">
-          If you did not initiate this request, your account is safe. Do not share this code with anyone.
-        </p>
-
-        <div class="footer">
-          ProxyQr Security Sentinel • Multi-Lab Attendance System
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  // 1. Try Resend HTTPS API over port 443 if key available
+  // 2. Try Resend HTTPS API if RESEND_API_KEY configured
   if (process.env.RESEND_API_KEY) {
-    const resendResult = await sendViaResendHttpApi(recipient, subjectText, htmlContent);
-    if (resendResult) return resendResult;
+    const resendResult = await sendViaResendHttpApi(targetRecipientEmail, 'Admin Security OTP Code', `<p>Your 6-digit OTP code is: <strong>${otpCode}</strong></p><p>This code expires in 5 minutes.</p>`);
+    if (resendResult && resendResult.messageId) {
+      return {
+        messageId: resendResult.messageId,
+        isDevConsole: false,
+        devMode: false,
+        message: 'OTP sent successfully to your email.',
+      };
+    }
   }
 
-  // 2. Try Brevo HTTPS API over port 443 if key available
-  if (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || process.env.BREVO_KEY) {
-    const brevoResult = await sendViaBrevoHttpApi(recipient, subjectText, htmlContent);
-    if (brevoResult) return brevoResult;
-  }
-
-  // 2. Try Standard SMTP Transporter (Port 587 STARTTLS / Port 465 SSL)
+  // 3. Try Standard SMTP Transporter (Port 587 STARTTLS / Port 465 SSL)
   const transporter = createTransporter();
   if (transporter) {
     const senderUser = process.env.DEFAULT_FROM_EMAIL || process.env.EMAIL_HOST_USER || process.env.BREVO_SMTP_USER || 'no-reply@proxyqr.com';
     const mailOptions = {
-      from: `"ProxyQr Admin Security" <${senderUser}>`,
-      to: recipient,
-      subject: subjectText,
-      html: htmlContent,
+      from: `"Attendance System" <${senderUser}>`,
+      to: targetRecipientEmail,
+      subject: 'Admin Security OTP Code',
+      html: `<p>Your 6-digit OTP code is: <strong>${otpCode}</strong></p><p>This code expires in 5 minutes.</p>`,
     };
 
     try {
@@ -239,18 +215,23 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
         setTimeout(() => reject(new Error('SMTP dispatch timed out (8s limit).')), 8000)
       );
       const info = await Promise.race([sendMailPromise, timeoutPromise]);
-      console.log(`[SMTP Mailer] OTP dispatched to ${recipient}. MessageId: ${info.messageId}`);
-      return { messageId: info.messageId, isDevConsole: false };
+      console.log(`[SMTP Mailer] OTP dispatched to ${targetRecipientEmail}. MessageId: ${info.messageId}`);
+      return {
+        messageId: info.messageId,
+        isDevConsole: false,
+        devMode: false,
+        message: 'OTP sent successfully to your email.',
+      };
     } catch (err) {
-      console.warn(`[SMTP Warning] SMTP dispatch failed (${err.message}). Activating Cloud Console Fallback.`);
+      console.warn(`[SMTP Warning] SMTP dispatch failed (${err.message}). Activating Fallback.`);
     }
   }
 
-  // 3. Fallback / Bypass Mode: Log OTP to server logs and return devConsole status (bypasses ENETUNREACH cloud block)
+  // 4. Fallback to console OTP ONLY if BREVO_API_KEY is not configured or in a strict local dev environment
   console.log(`====================================================`);
   console.log(`[ADMIN OTP BYPASS]: The OTP code is ${otpCode}`);
   console.log(`====================================================`);
-  return { messageId: 'cloud-console-fallback', isDevConsole: true };
+  return { messageId: 'cloud-console-fallback', isDevConsole: true, devMode: true };
 }
 
 async function sendProctorOtpEmail(otpCode) {

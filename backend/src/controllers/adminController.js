@@ -117,8 +117,9 @@ exports.requestChangePasswordOtp = async (req, res) => {
     const result = await requestSecurityOtp('CHANGE_PASSWORD');
     return res.json({
       success: true,
+      devMode: !!result.devMode,
+      isDevConsole: !!result.isDevConsole,
       message: result.message,
-      isDevConsole: result.isDevConsole,
     });
   } catch (err) {
     return res.status(400).json({ success: false, message: err.message });
@@ -167,8 +168,9 @@ exports.requestResetPasswordOtp = async (req, res) => {
     const result = await requestSecurityOtp('RESET_PASSWORD');
     return res.json({
       success: true,
+      devMode: !!result.devMode,
+      isDevConsole: !!result.isDevConsole,
       message: result.message,
-      isDevConsole: result.isDevConsole,
     });
   } catch (err) {
     return res.status(400).json({ success: false, message: err.message });
