@@ -4,29 +4,37 @@ function createTransporter() {
   const user = (process.env.EMAIL_HOST_USER || process.env.ADMIN_OWNER_EMAIL || process.env.BREVO_SMTP_USER || '').trim();
   const rawPass = process.env.EMAIL_HOST_PASSWORD || process.env.BREVO_SMTP_KEY || '';
   const pass = rawPass.trim().replace(/\s+/g, '');
-  const host = process.env.EMAIL_HOST || (process.env.BREVO_SMTP_USER ? 'smtp-relay.brevo.com' : 'smtp.gmail.com');
-  const port = parseInt(process.env.EMAIL_PORT || '587', 10);
-  const secure = port === 465;
 
   if (!user || !pass) {
     console.warn('[Mailer Warning] Email user or password missing in environment variables. Falling back to Console Email backend.');
     return null;
   }
 
+  const isGmail = user.toLowerCase().endsWith('@gmail.com') || process.env.EMAIL_HOST === 'smtp.gmail.com';
+
+  if (isGmail) {
+    return nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user,
+        pass,
+      },
+    });
+  }
+
+  const host = process.env.EMAIL_HOST || (process.env.BREVO_SMTP_USER ? 'smtp-relay.brevo.com' : 'smtp.gmail.com');
+  const port = parseInt(process.env.EMAIL_PORT || '587', 10);
+  const secure = port === 465;
+
   return nodemailer.createTransport({
     host,
     port,
-    secure, // false for 587 (TLS), true for 465 (SSL)
-    auth: {
-      user,
-      pass,
-    },
-    tls: {
-      rejectUnauthorized: false,
-    },
-    connectionTimeout: 6000, // 6s timeout
-    greetingTimeout: 4000,   // 4s timeout
-    socketTimeout: 8000,     // 8s timeout
+    secure,
+    auth: { user, pass },
+    tls: { rejectUnauthorized: false },
+    connectionTimeout: 10000,
+    greetingTimeout: 8000,
+    socketTimeout: 10000,
   });
 }
 
@@ -58,7 +66,7 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   const rawPass = process.env.EMAIL_HOST_PASSWORD || process.env.BREVO_SMTP_KEY || '';
   const pass = rawPass.trim().replace(/\s+/g, '');
 
-  // DEV MODE Console Fallback if SMTP password is missing
+  // DEV MODE Console Fallback ONLY if SMTP password is missing
   if (!pass) {
     console.log(`[DEV MODE] OTP sent to console: ${otpCode}`);
     return { messageId: 'local-console-fallback', isDevConsole: true };
@@ -124,9 +132,8 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
     console.log(`[SMTP Mailer] OTP dispatched to ${recipient}. MessageId: ${info.messageId}`);
     return { messageId: info.messageId, isDevConsole: false };
   } catch (err) {
-    console.error(`[SMTP Error Warning] SMTP dispatch error (${err.message}). Falling back to Console OTP:`, err);
-    console.log(`[DEV MODE] OTP sent to console: ${otpCode}`);
-    return { messageId: 'console-fallback-on-error', isDevConsole: true };
+    console.error(`[SMTP Error] Failed to send email via Gmail SMTP:`, err);
+    throw new Error(`Gmail SMTP dispatch error: ${err.message}. Please verify your Gmail App Password.`);
   }
 }
 
