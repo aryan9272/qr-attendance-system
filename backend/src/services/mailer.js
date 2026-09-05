@@ -89,17 +89,18 @@ async function sendViaResendHttpApi(recipient, subjectText, htmlContent) {
     clearTimeout(timeoutId);
     if (res.ok) {
       const data = await res.json();
-      console.log(`[Resend HTTPS API] OTP dispatched to ${recipient}. MessageId: ${data.id}`);
-      return { messageId: data.id, isDevConsole: false };
+      console.log(`[Resend HTTPS API Success] OTP dispatched to ${recipient}. MessageId: ${data.id}`);
+      return { success: true, messageId: data.id, isDevConsole: false };
     } else {
       const errData = await res.json().catch(() => ({}));
       console.warn(`[Resend HTTPS API Failed] HTTP ${res.status}:`, errData.message || JSON.stringify(errData));
+      return { success: false, status: res.status, errData };
     }
   } catch (e) {
     clearTimeout(timeoutId);
     console.warn(`[Resend HTTPS API Warning] ${e.message}`);
+    return { success: false, error: e.message };
   }
-  return null;
 }
 
 async function sendViaBrevoHttpApi(targetRecipientEmail, otpCode) {
@@ -171,6 +172,23 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   console.log(`📩 Target Recipient Email: ${targetRecipientEmail}`);
   console.log(`====================================================`);
 
+  // 1. Try Resend HTTPS API if RESEND_API_KEY is configured (Instant 0-setup option)
+  let resendErrorMsg = '';
+  if (process.env.RESEND_API_KEY) {
+    const resendResult = await sendViaResendHttpApi(targetRecipientEmail, 'Admin Security OTP Code', `<p>Your 6-digit OTP code is: <strong>${otpCode}</strong></p><p>This code expires in 5 minutes.</p>`);
+    if (resendResult && resendResult.success) {
+      return {
+        messageId: resendResult.messageId,
+        isDevConsole: false,
+        devMode: false,
+        message: 'OTP sent successfully to your email.',
+      };
+    } else if (resendResult && resendResult.errData) {
+      resendErrorMsg = resendResult.errData.message || `HTTP ${resendResult.status}`;
+    }
+  }
+
+  // 2. Try Brevo HTTPS API if BREVO_API_KEY is configured
   let brevoErrorMsg = '';
   const apiKey = (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || process.env.BREVO_KEY || '').trim().replace(/['"]/g, '');
   if (apiKey) {
@@ -185,19 +203,6 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
     } else if (brevoResult && brevoResult.responseData) {
       brevoErrorMsg = brevoResult.responseData.message || brevoResult.responseData.code || `HTTP ${brevoResult.status}`;
       console.warn(`[Brevo API Error Detail]: ${brevoErrorMsg}`);
-    }
-  }
-
-  // 2. Try Resend HTTPS API if RESEND_API_KEY configured
-  if (process.env.RESEND_API_KEY) {
-    const resendResult = await sendViaResendHttpApi(targetRecipientEmail, 'Admin Security OTP Code', `<p>Your 6-digit OTP code is: <strong>${otpCode}</strong></p><p>This code expires in 5 minutes.</p>`);
-    if (resendResult && resendResult.messageId) {
-      return {
-        messageId: resendResult.messageId,
-        isDevConsole: false,
-        devMode: false,
-        message: 'OTP sent successfully to your email.',
-      };
     }
   }
 
@@ -230,12 +235,15 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
     }
   }
 
-  if (brevoErrorMsg) {
-    throw new Error(`Brevo Email API Error: ${brevoErrorMsg}. Please check your Brevo API Key.`);
+  if (resendErrorMsg) {
+    throw new Error(`Resend Email API Error: ${resendErrorMsg}. Please check your RESEND_API_KEY in Render.`);
   }
 
-  throw new Error('Email delivery failed. Please check your Brevo API key or Gmail App Password in Render.');
-}
+  if (brevoErrorMsg) {
+    throw new Error(`Brevo Email API Error: ${brevoErrorMsg}. Please request activation at contact@brevo.com or switch to Resend.com.`);
+  }
+
+  throw new Error('Email delivery failed. Please add RESEND_API_KEY or verify your Gmail App Password in Render.');
 
 async function sendProctorOtpEmail(otpCode) {
   return sendSecurityOtpEmail(otpCode, 'PROCTOR_ACCESS');
