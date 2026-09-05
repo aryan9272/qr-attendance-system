@@ -20,14 +20,30 @@ export default function AdminAuth() {
 
   // Form States
   const [masterPassword, setMasterPassword] = useState('');
+  const [showMasterPassword, setShowMasterPassword] = useState(false);
 
   // Forgot Password / Recovery States
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [resetOtpCode, setResetOtpCode] = useState('');
   const [newMasterPassword, setNewMasterPassword] = useState('');
+  const [showNewMasterPassword, setShowNewMasterPassword] = useState(false);
   const [resetInfoMessage, setResetInfoMessage] = useState('');
   const [resetErrorMessage, setResetErrorMessage] = useState('');
   const [isRequestingResetOtp, setIsRequestingResetOtp] = useState(false);
+
+  // Cooldown & Dev Mode States
+  const [cooldown, setCooldown] = useState(0);
+  const [isDevConsole, setIsDevConsole] = useState(false);
+
+  useEffect(() => {
+    let timer;
+    if (cooldown > 0) {
+      timer = setInterval(() => {
+        setCooldown((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [cooldown]);
 
   // UI Status States
   const [isLoading, setIsLoading] = useState(false);
