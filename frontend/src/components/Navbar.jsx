@@ -63,7 +63,7 @@ export default function Navbar() {
           sessionStorage.clear();
           setAdminUser(null);
           if (location.pathname !== '/admin/login' && location.pathname !== '/scan') {
-            navigate('/admin/login');
+            window.location.href = '/admin/login';
           }
           return;
         }
@@ -91,7 +91,7 @@ export default function Navbar() {
         sessionStorage.clear();
         sessionStorage.setItem('logout_alert_msg', 'This session has been terminated by an administrator.');
         if (location.pathname !== '/admin/login' && location.pathname !== '/scan') {
-          navigate('/admin/login');
+          window.location.href = '/admin/login';
         }
       }
     };
@@ -111,7 +111,7 @@ export default function Navbar() {
             sessionStorage.setItem('logout_alert_msg', 'This session has been terminated by an administrator.');
             setAdminUser(null);
             if (location.pathname !== '/admin/login' && location.pathname !== '/scan') {
-              navigate('/admin/login');
+              window.location.href = '/admin/login';
             }
           }
         };
@@ -122,7 +122,7 @@ export default function Navbar() {
       window.removeEventListener('storage', handleStorageChange);
       if (channel) channel.close();
     };
-  }, [location.pathname, backendUrl, navigate]);
+  }, [location.pathname, backendUrl]);
 
   const broadcastForceLogout = () => {
     if (typeof BroadcastChannel !== 'undefined') {
@@ -151,7 +151,7 @@ export default function Navbar() {
       localStorage.removeItem('admin_user');
       sessionStorage.clear();
       setAdminUser(null);
-      navigate('/admin/login');
+      window.location.href = '/admin/login';
     }
   };
 
@@ -175,7 +175,7 @@ export default function Navbar() {
       localStorage.removeItem('admin_user');
       sessionStorage.clear();
       setAdminUser(null);
-      navigate('/admin/login');
+      window.location.href = '/admin/login';
     }
   };
 
