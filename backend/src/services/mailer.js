@@ -6,6 +6,10 @@ if (dns.setDefaultResultOrder) {
   dns.setDefaultResultOrder('ipv4first');
 }
 
+const customIpv4Lookup = (hostname, options, callback) => {
+  return dns.lookup(hostname, { family: 4 }, callback);
+};
+
 function createTransporter() {
   const user = (process.env.EMAIL_HOST_USER || process.env.ADMIN_OWNER_EMAIL || process.env.BREVO_SMTP_USER || '').trim();
   const rawPass = process.env.EMAIL_HOST_PASSWORD || process.env.BREVO_SMTP_KEY || '';
@@ -28,6 +32,7 @@ function createTransporter() {
         pass,
       },
       family: 4, // Force IPv4 socket connection
+      lookup: customIpv4Lookup, // Guarantee strict IPv4 resolution (bypasses ENETUNREACH IPv6 cloud errors on Render)
       connectionTimeout: 8000,
       greetingTimeout: 5000,
       socketTimeout: 10000,
@@ -45,6 +50,7 @@ function createTransporter() {
     auth: { user, pass },
     tls: { rejectUnauthorized: false },
     family: 4, // Force IPv4 socket connection
+    lookup: customIpv4Lookup,
     connectionTimeout: 10000,
     greetingTimeout: 8000,
     socketTimeout: 10000,
