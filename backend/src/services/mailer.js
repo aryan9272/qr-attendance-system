@@ -244,6 +244,7 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   }
 
   throw new Error('Email delivery failed. Please add RESEND_API_KEY or verify your Gmail App Password in Render.');
+}
 
 async function sendProctorOtpEmail(otpCode) {
   return sendSecurityOtpEmail(otpCode, 'PROCTOR_ACCESS');
