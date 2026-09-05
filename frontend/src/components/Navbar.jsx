@@ -399,6 +399,4 @@ export default function Navbar() {
     </>
   );
 }
-    </>
-  );
-}
+
