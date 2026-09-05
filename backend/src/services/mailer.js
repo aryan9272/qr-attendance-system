@@ -1,14 +1,14 @@
 const nodemailer = require('nodemailer');
 
 function createTransporter() {
-  const user = process.env.EMAIL_HOST_USER || process.env.BREVO_SMTP_USER;
+  const user = process.env.EMAIL_HOST_USER || process.env.ADMIN_OWNER_EMAIL || process.env.BREVO_SMTP_USER;
   const pass = process.env.EMAIL_HOST_PASSWORD || process.env.BREVO_SMTP_KEY;
   const host = process.env.EMAIL_HOST || (process.env.BREVO_SMTP_USER ? 'smtp-relay.brevo.com' : 'smtp.gmail.com');
   const port = parseInt(process.env.EMAIL_PORT || '587', 10);
   const secure = port === 465;
 
   if (!user || !pass) {
-    console.warn('[Mailer Warning] EMAIL_HOST_USER or EMAIL_HOST_PASSWORD missing in environment variables. Falling back to Console Email backend.');
+    console.warn('[Mailer Warning] Email user or password missing in environment variables. Falling back to Console Email backend.');
     return null;
   }
 
