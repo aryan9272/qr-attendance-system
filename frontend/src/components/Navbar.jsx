@@ -83,10 +83,60 @@ export default function Navbar() {
 
   useEffect(() => {
     checkAdminSession();
-  }, [location.pathname, backendUrl]);
+
+    const handleStorageChange = (e) => {
+      if (e.key === 'admin_token' && (!e.newValue || e.newValue === 'null')) {
+        console.log('[Navbar] Admin token cleared in another tab!');
+        setAdminUser(null);
+        sessionStorage.clear();
+        sessionStorage.setItem('logout_alert_msg', 'This session has been terminated by an administrator.');
+        if (location.pathname.startsWith('/admin') && location.pathname !== '/admin/login') {
+          navigate('/admin/login');
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+
+    let channel;
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        channel = new BroadcastChannel('admin_auth_channel');
+        channel.onmessage = (msg) => {
+          if (msg?.data?.type === 'FORCE_LOGOUT') {
+            console.log('[Navbar] Received FORCE_LOGOUT signal from BroadcastChannel');
+            localStorage.removeItem('admin_token');
+            localStorage.removeItem('admin_user');
+            sessionStorage.clear();
+            sessionStorage.setItem('logout_alert_msg', 'This session has been terminated by an administrator.');
+            setAdminUser(null);
+            if (location.pathname.startsWith('/admin') && location.pathname !== '/admin/login') {
+              navigate('/admin/login');
+            }
+          }
+        };
+      } catch (e) {}
+    }
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      if (channel) channel.close();
+    };
+  }, [location.pathname, backendUrl, navigate]);
+
+  const broadcastForceLogout = () => {
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        const bc = new BroadcastChannel('admin_auth_channel');
+        bc.postMessage({ type: 'FORCE_LOGOUT' });
+        bc.close();
+      } catch (e) {}
+    }
+  };
 
   const handleLogout = async () => {
     try {
+      broadcastForceLogout();
       const token = localStorage.getItem('admin_token');
       if (token) {
         await fetch(`${backendUrl}/api/admin/auth/logout`, {
@@ -108,6 +158,7 @@ export default function Navbar() {
   const handleConfirmLogoutAll = async () => {
     setIsLoggingOutAll(true);
     try {
+      broadcastForceLogout();
       const token = localStorage.getItem('admin_token');
       if (token) {
         await fetch(`${backendUrl}/api/admin/auth/logout-all`, {
