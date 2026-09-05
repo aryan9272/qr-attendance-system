@@ -64,8 +64,46 @@ function createTransporter() {
   });
 }
 
+async function sendViaResendHttpApi(recipient, subjectText, htmlContent) {
+  const apiKey = (process.env.RESEND_API_KEY || '').trim().replace(/['"]/g, '');
+  if (!apiKey) return null;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'ProxyQr Admin Security <onboarding@resend.dev>',
+        to: [recipient],
+        subject: subjectText,
+        html: htmlContent,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (res.ok) {
+      const data = await res.json();
+      console.log(`[Resend HTTPS API] OTP dispatched to ${recipient}. MessageId: ${data.id}`);
+      return { messageId: data.id, isDevConsole: false };
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      console.warn(`[Resend HTTPS API Failed] HTTP ${res.status}:`, errData.message || JSON.stringify(errData));
+    }
+  } catch (e) {
+    clearTimeout(timeoutId);
+    console.warn(`[Resend HTTPS API Warning] ${e.message}`);
+  }
+  return null;
+}
+
 async function sendViaBrevoHttpApi(recipient, subjectText, htmlContent) {
-  const apiKey = (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || '').trim();
+  const apiKey = (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || process.env.BREVO_KEY || '').trim().replace(/['"]/g, '');
   if (!apiKey) return null;
 
   const senderUser = (process.env.DEFAULT_FROM_EMAIL || process.env.ADMIN_OWNER_EMAIL || process.env.EMAIL_HOST_USER || recipient || 'voyager9579@gmail.com').trim();
@@ -172,10 +210,16 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
     </html>
   `;
 
-  // 1. Try Brevo HTTPS API over port 443 first if key available
-  if (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY) {
-    const httpResult = await sendViaBrevoHttpApi(recipient, subjectText, htmlContent);
-    if (httpResult) return httpResult;
+  // 1. Try Resend HTTPS API over port 443 if key available
+  if (process.env.RESEND_API_KEY) {
+    const resendResult = await sendViaResendHttpApi(recipient, subjectText, htmlContent);
+    if (resendResult) return resendResult;
+  }
+
+  // 2. Try Brevo HTTPS API over port 443 if key available
+  if (process.env.BREVO_API_KEY || process.env.BREVO_SMTP_KEY || process.env.BREVO_KEY) {
+    const brevoResult = await sendViaBrevoHttpApi(recipient, subjectText, htmlContent);
+    if (brevoResult) return brevoResult;
   }
 
   // 2. Try Standard SMTP Transporter (Port 587 STARTTLS / Port 465 SSL)
