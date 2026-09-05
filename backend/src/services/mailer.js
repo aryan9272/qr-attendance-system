@@ -64,7 +64,7 @@ function createTransporter() {
   });
 }
 
-async function sendViaResendHttpApi(recipient, subjectText, htmlContent) {
+async function sendViaResendHttpApi(recipient, subjectText, htmlContent, isReroute = false) {
   const apiKey = (process.env.RESEND_API_KEY || '').trim().replace(/['"]/g, '');
   if (!apiKey) return null;
 
@@ -90,10 +90,20 @@ async function sendViaResendHttpApi(recipient, subjectText, htmlContent) {
     if (res.ok) {
       const data = await res.json();
       console.log(`[Resend HTTPS API Success] OTP dispatched to ${recipient}. MessageId: ${data.id}`);
-      return { success: true, messageId: data.id, isDevConsole: false };
+      return { success: true, messageId: data.id, isDevConsole: false, recipient };
     } else {
       const errData = await res.json().catch(() => ({}));
-      console.warn(`[Resend HTTPS API Failed] HTTP ${res.status}:`, errData.message || JSON.stringify(errData));
+      const msg = errData.message || '';
+
+      // Auto-reroute if Resend testing mode requires sending to registered Resend account owner email
+      if (!isReroute && msg.includes('testing emails to your own email address')) {
+        const match = msg.match(/\(([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\)/);
+        const ownerEmail = match ? match[1] : (process.env.ADMIN_OWNER_EMAIL || 'aryankale9272@gmail.com');
+        console.log(`[Resend Testing Mode Auto-Reroute] Rerouting email dispatch to verified Resend owner: ${ownerEmail}`);
+        return sendViaResendHttpApi(ownerEmail, subjectText, htmlContent, true);
+      }
+
+      console.warn(`[Resend HTTPS API Failed] HTTP ${res.status}:`, msg || JSON.stringify(errData));
       return { success: false, status: res.status, errData };
     }
   } catch (e) {
