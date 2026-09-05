@@ -125,10 +125,16 @@ export default function Navbar() {
     setPasswordError('');
     setOtpSentMessage('');
     setIsDevConsole(false);
+
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      setPasswordError('Session expired or not logged in. Please log in first, or click "Forgot Password?" on the login page.');
+      return;
+    }
+
     setIsSendingOtp(true);
 
     try {
-      const token = localStorage.getItem('admin_token');
       const res = await fetch(`${backendUrl}/api/admin/auth/request-change-password-otp`, {
         method: 'POST',
         headers: {
@@ -158,6 +164,12 @@ export default function Navbar() {
     e.preventDefault();
     setPasswordError('');
     setPasswordSuccess('');
+
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      setPasswordError('Session expired or not logged in. Please log in first, or click "Forgot Password?" on the login page.');
+      return;
+    }
 
     if (!currentPassword || !newPassword || !otpCode) {
       setPasswordError('Please fill in current password, new password, and the 6-digit email OTP.');
