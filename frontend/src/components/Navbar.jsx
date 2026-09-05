@@ -100,13 +100,47 @@ export default function Navbar() {
     handleLogout();
   };
 
+  const [otpCode, setOtpCode] = useState('');
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [otpSentMessage, setOtpSentMessage] = useState('');
+
+  const handleRequestChangeOtp = async () => {
+    setPasswordError('');
+    setOtpSentMessage('');
+    setIsSendingOtp(true);
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch(`${backendUrl}/api/admin/auth/request-change-password-otp`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'x-admin-token': token,
+        },
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setPasswordError(data.message || 'Failed to send OTP to owner email.');
+        setIsSendingOtp(false);
+        return;
+      }
+
+      setOtpSentMessage(data.message || '6-digit OTP code sent to administrator email address.');
+    } catch (err) {
+      setPasswordError(err.message || 'Network error requesting OTP.');
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
   const handleChangePasswordSubmit = async (e) => {
     e.preventDefault();
     setPasswordError('');
     setPasswordSuccess('');
 
-    if (!currentPassword || !newPassword) {
-      setPasswordError('Please fill in both current and new password.');
+    if (!currentPassword || !newPassword || !otpCode) {
+      setPasswordError('Please fill in current password, new password, and the 6-digit email OTP.');
       return;
     }
 
@@ -126,7 +160,7 @@ export default function Navbar() {
           Authorization: `Bearer ${token}`,
           'x-admin-token': token,
         },
-        body: JSON.stringify({ currentPassword, newPassword }),
+        body: JSON.stringify({ currentPassword, newPassword, otp: otpCode.trim() }),
       });
 
       const data = await res.json();
@@ -140,11 +174,13 @@ export default function Navbar() {
         localStorage.setItem('admin_token', data.token);
       }
 
-      setPasswordSuccess('Master password updated successfully!');
+      setPasswordSuccess('Master password updated successfully! All other sessions revoked.');
       setTimeout(() => {
         setIsChangePasswordModalOpen(false);
         setCurrentPassword('');
         setNewPassword('');
+        setOtpCode('');
+        setOtpSentMessage('');
         setPasswordSuccess('');
       }, 1200);
     } catch (err) {
@@ -280,6 +316,12 @@ export default function Navbar() {
               </div>
             )}
 
+            {otpSentMessage && (
+              <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold">
+                {otpSentMessage}
+              </div>
+            )}
+
             {passwordSuccess && (
               <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-mono font-bold">
                 {passwordSuccess}
@@ -311,6 +353,29 @@ export default function Navbar() {
                 />
               </div>
 
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-300 font-semibold block">Owner Security OTP (6 Digits)</label>
+                  <button
+                    type="button"
+                    onClick={handleRequestChangeOtp}
+                    disabled={isSendingOtp}
+                    className="text-[11px] text-cyan-400 hover:underline font-bold"
+                  >
+                    {isSendingOtp ? 'Sending...' : 'Send OTP to Owner Email'}
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  maxLength={6}
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="Enter 6-digit OTP..."
+                  required
+                  className="w-full px-4 py-3 rounded-xl glass-input text-cyan-300 font-bold tracking-[4px]"
+                />
+              </div>
+
               <div className="pt-2 flex items-center justify-end gap-3">
                 <button
                   type="button"
@@ -331,6 +396,9 @@ export default function Navbar() {
           </div>
         </div>
       )}
+    </>
+  );
+}
     </>
   );
 }

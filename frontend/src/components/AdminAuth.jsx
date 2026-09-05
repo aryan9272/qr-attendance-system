@@ -8,6 +8,10 @@ import {
   AlertTriangle,
   CheckCircle2,
   RefreshCw,
+  Mail,
+  Send,
+  X,
+  Sparkles,
 } from 'lucide-react';
 import { fetchWithFailover } from '../utils/apiResolver';
 
@@ -16,6 +20,14 @@ export default function AdminAuth() {
 
   // Form States
   const [masterPassword, setMasterPassword] = useState('');
+
+  // Forgot Password / Recovery States
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [resetOtpCode, setResetOtpCode] = useState('');
+  const [newMasterPassword, setNewMasterPassword] = useState('');
+  const [resetInfoMessage, setResetInfoMessage] = useState('');
+  const [resetErrorMessage, setResetErrorMessage] = useState('');
+  const [isRequestingResetOtp, setIsRequestingResetOtp] = useState(false);
 
   // UI Status States
   const [isLoading, setIsLoading] = useState(false);
@@ -67,6 +79,79 @@ export default function AdminAuth() {
       }, 800);
     } catch (err) {
       setErrorMessage(err.message || 'Network error connecting to Admin Auth server.');
+      setIsLoading(false);
+    }
+  };
+
+  // Request Reset Password OTP
+  const handleRequestResetOtp = async () => {
+    setResetErrorMessage('');
+    setResetInfoMessage('');
+    setIsRequestingResetOtp(true);
+
+    try {
+      const { res, data } = await fetchWithFailover('/api/admin/auth/request-reset-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!res.ok || !data.success) {
+        setResetErrorMessage(data.message || 'Failed to send recovery OTP.');
+        setIsRequestingResetOtp(false);
+        return;
+      }
+
+      setResetInfoMessage(data.message || 'Recovery OTP sent to administrator email address.');
+    } catch (err) {
+      setResetErrorMessage(err.message || 'Network error requesting recovery OTP.');
+    } finally {
+      setIsRequestingResetOtp(false);
+    }
+  };
+
+  // Submit Password Reset via OTP
+  const handleResetPasswordSubmit = async (e) => {
+    e.preventDefault();
+    setResetErrorMessage('');
+    setResetInfoMessage('');
+
+    if (!resetOtpCode || resetOtpCode.trim().length !== 6) {
+      setResetErrorMessage('Please enter the 6-digit numeric OTP code.');
+      return;
+    }
+
+    if (!newMasterPassword || newMasterPassword.length < 8) {
+      setResetErrorMessage('New password must be at least 8 characters long.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const { res, data } = await fetchWithFailover('/api/admin/auth/reset-password-with-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ otp: resetOtpCode.trim(), newPassword: newMasterPassword }),
+      });
+
+      if (!res.ok || !data.success || !data.token) {
+        setResetErrorMessage(data.message || 'Failed to reset master password.');
+        setIsLoading(false);
+        return;
+      }
+
+      localStorage.setItem('admin_token', data.token);
+      localStorage.setItem('admin_user', JSON.stringify(data.admin));
+
+      setIsLoading(false);
+      setIsResetModalOpen(false);
+      setSuccessState(true);
+
+      setTimeout(() => {
+        navigate('/');
+      }, 800);
+    } catch (err) {
+      setResetErrorMessage(err.message || 'Network error resetting password.');
       setIsLoading(false);
     }
   };
@@ -130,10 +215,23 @@ export default function AdminAuth() {
         {/* MASTER PASSWORD LOGIN FORM */}
         <form onSubmit={handleMasterLoginSubmit} className="space-y-4 text-xs font-mono">
           <div className="space-y-1.5">
-            <label className="font-semibold flex items-center gap-1.5 text-slate-300">
-              <KeyRound className="w-3.5 h-3.5 text-cyan-400" />
-              Master Admin Password
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="font-semibold flex items-center gap-1.5 text-slate-300">
+                <KeyRound className="w-3.5 h-3.5 text-cyan-400" />
+                Master Admin Password
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsResetModalOpen(true);
+                  setResetErrorMessage('');
+                  setResetInfoMessage('');
+                }}
+                className="text-[11px] text-cyan-400 hover:underline font-semibold"
+              >
+                Forgot Password?
+              </button>
+            </div>
             <input
               type="password"
               value={masterPassword}
@@ -165,10 +263,103 @@ export default function AdminAuth() {
         </form>
       </div>
 
+      {/* ACCOUNT RECOVERY / RESET PASSWORD MODAL */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 z-[99990] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="glass-panel p-6 sm:p-8 rounded-3xl max-w-md w-full space-y-5 border-cyan-500/40 shadow-[0_0_50px_rgba(6,182,212,0.25)]">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-white font-display font-bold">
+                <Mail className="w-5 h-5 text-cyan-400" />
+                <span>Recover Admin Access</span>
+              </div>
+              <button
+                onClick={() => setIsResetModalOpen(false)}
+                className="p-1 rounded-xl bg-slate-900 text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 font-mono leading-relaxed">
+              If your password was changed or compromised, request an Email OTP to set a new Master Password and revoke all active sessions.
+            </p>
+
+            {resetErrorMessage && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-mono">
+                {resetErrorMessage}
+              </div>
+            )}
+
+            {resetInfoMessage && (
+              <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold">
+                {resetInfoMessage}
+              </div>
+            )}
+
+            <div className="space-y-4 text-xs font-mono">
+              <button
+                type="button"
+                onClick={handleRequestResetOtp}
+                disabled={isRequestingResetOtp}
+                className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 font-bold transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isRequestingResetOtp ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                <span>Send Recovery OTP to Owner Email</span>
+              </button>
+
+              <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-semibold block">6-Digit Recovery OTP</label>
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={resetOtpCode}
+                    onChange={(e) => setResetOtpCode(e.target.value.replace(/\D/g, ''))}
+                    placeholder="Enter 6-digit OTP..."
+                    required
+                    className="w-full px-4 py-3 rounded-xl glass-input text-cyan-300 font-bold tracking-[4px] text-center text-lg"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-semibold block">New Master Password (Min 8 chars)</label>
+                  <input
+                    type="password"
+                    value={newMasterPassword}
+                    onChange={(e) => setNewMasterPassword(e.target.value)}
+                    placeholder="Enter new master password..."
+                    required
+                    className="w-full px-4 py-3 rounded-xl glass-input text-slate-200"
+                  />
+                </div>
+
+                <div className="pt-2 flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsResetModalOpen(false)}
+                    className="px-4 py-2.5 rounded-xl bg-slate-900 text-slate-400 hover:text-white cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isLoading || resetOtpCode.length !== 6}
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 font-bold text-white shadow-[0_0_20px_rgba(6,182,212,0.4)] cursor-pointer"
+                  >
+                    {isLoading ? 'Resetting...' : 'Reset & Reclaim Access'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
       <footer className="pt-6 pb-2 text-center text-xs font-mono text-slate-400 tracking-wider">
         <span>ProxyQr Admin Security • Multi-Lab Attendance System</span>
       </footer>
     </div>
   );
 }
+
 

@@ -2,15 +2,16 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const Admin = require('../models/Admin');
-const { sendProctorOtpEmail } = require('./mailer');
+const { sendProctorOtpEmail, sendSecurityOtpEmail } = require('./mailer');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'proxyqr-super-secret-jwt-key-2026';
 const DEFAULT_MASTER_PASS = '2024BIT020@2026';
 
 // In-Memory OTP Store with Rate-Limiting Sentinel
-// Key: 'owner_otp' -> { code, expiresAt, attempts, requests: [timestamps], lockedUntil }
+// Key: 'owner_otp' -> { code, type, expiresAt, attempts, requests: [timestamps], lockedUntil }
 const otpStore = {
   code: null,
+  type: null,
   expiresAt: 0,
   failedAttempts: 0,
   lockedUntil: 0,
@@ -86,7 +87,7 @@ async function verifyMasterPassword(passwordInput) {
 }
 
 /**
- * Update Master Password
+ * Update Master Password (Direct)
  */
 async function updateMasterPassword(currentPassword, newPassword) {
   const admin = await verifyMasterPassword(currentPassword);
@@ -109,19 +110,9 @@ async function updateMasterPassword(currentPassword, newPassword) {
 }
 
 /**
- * Increment token version (Logout All Devices)
+ * Request Security OTP (CHANGE_PASSWORD | RESET_PASSWORD | PROCTOR_ACCESS)
  */
-async function incrementTokenVersion() {
-  const admin = await getOrInitAdmin();
-  admin.tokenVersion += 1;
-  await admin.save();
-  return admin.tokenVersion;
-}
-
-/**
- * Request Delegated Proctor OTP
- */
-async function requestProctorOtp() {
+async function requestSecurityOtp(type = 'CHANGE_PASSWORD') {
   const now = Date.now();
 
   // Check 30-minute Lockout
@@ -140,20 +131,21 @@ async function requestProctorOtp() {
   const numericOtp = crypto.randomInt(100000, 999999).toString();
 
   otpStore.code = numericOtp;
+  otpStore.type = type;
   otpStore.expiresAt = now + 5 * 60 * 1000; // 5 Minutes Expiry
   otpStore.failedAttempts = 0;
   otpStore.requestTimestamps.push(now);
 
   // Dispatch Email via Brevo SMTP
-  await sendProctorOtpEmail(numericOtp);
+  await sendSecurityOtpEmail(numericOtp, type);
 
-  return { success: true, message: 'OTP dispatched to preconfigured administrator email.' };
+  return { success: true, message: `Security OTP dispatched to administrator email for ${type}.` };
 }
 
 /**
- * Verify Delegated Proctor OTP
+ * Verify Security OTP
  */
-async function verifyProctorOtp(otpInput) {
+function verifySecurityOtpInternal(otpInput, expectedType = null) {
   const now = Date.now();
 
   if (otpStore.lockedUntil > now) {
@@ -162,7 +154,11 @@ async function verifyProctorOtp(otpInput) {
   }
 
   if (!otpStore.code || otpStore.expiresAt < now) {
-    throw new Error('OTP has expired or has not been requested. Please request a new OTP.');
+    throw new Error('OTP has expired or has not been requested. Please request a new OTP code.');
+  }
+
+  if (expectedType && otpStore.type !== expectedType) {
+    throw new Error('Invalid OTP request context. Please request a new OTP code.');
   }
 
   if (otpInput.trim() !== otpStore.code) {
@@ -172,14 +168,94 @@ async function verifyProctorOtp(otpInput) {
       otpStore.code = null;
       throw new Error('Maximum failed attempts reached. OTP verification locked for 30 minutes.');
     }
-    throw new Error(`Invalid OTP code. ${5 - otpStore.failedAttempts} attempt(s) remaining.`);
+    throw new Error(`Invalid 6-digit OTP code. ${5 - otpStore.failedAttempts} attempt(s) remaining.`);
   }
 
   // Single-Use: Invalidate OTP immediately upon success
   otpStore.code = null;
+  otpStore.type = null;
   otpStore.expiresAt = 0;
   otpStore.failedAttempts = 0;
+}
 
+/**
+ * Update Master Password WITH Required Email OTP
+ */
+async function updateMasterPasswordWithOtp(currentPassword, newPassword, otpInput) {
+  // 1. Verify Current Password
+  const admin = await verifyMasterPassword(currentPassword);
+  if (!admin) {
+    throw new Error('Current master password is incorrect.');
+  }
+
+  // 2. Verify Email OTP
+  if (!otpInput) {
+    throw new Error('Security OTP code is required to change password.');
+  }
+  verifySecurityOtpInternal(otpInput, 'CHANGE_PASSWORD');
+
+  if (!newPassword || newPassword.length < 8) {
+    throw new Error('New master password must be at least 8 characters long.');
+  }
+
+  const salt = await bcrypt.genSalt(10);
+  const newHash = await bcrypt.hash(newPassword, salt);
+
+  admin.passwordHash = newHash;
+  admin.tokenVersion += 1; // Revokes all active sessions across devices
+  await admin.save();
+
+  return admin;
+}
+
+/**
+ * Reset Master Password via Email OTP (Forgot Password Recovery)
+ */
+async function resetMasterPasswordWithOtp(otpInput, newPassword) {
+  if (!otpInput) {
+    throw new Error('Recovery OTP code is required.');
+  }
+
+  // 1. Verify OTP
+  verifySecurityOtpInternal(otpInput, 'RESET_PASSWORD');
+
+  if (!newPassword || newPassword.length < 8) {
+    throw new Error('New password must be at least 8 characters long.');
+  }
+
+  const admin = await getOrInitAdmin();
+  const salt = await bcrypt.genSalt(10);
+  const newHash = await bcrypt.hash(newPassword, salt);
+
+  admin.passwordHash = newHash;
+  admin.tokenVersion += 1; // Immediately invalidates all existing sessions including any hijacked ones
+  await admin.save();
+
+  return admin;
+}
+
+/**
+ * Increment token version (Logout All Devices)
+ */
+async function incrementTokenVersion() {
+  const admin = await getOrInitAdmin();
+  admin.tokenVersion += 1;
+  await admin.save();
+  return admin.tokenVersion;
+}
+
+/**
+ * Request Delegated Proctor OTP
+ */
+async function requestProctorOtp() {
+  return requestSecurityOtp('PROCTOR_ACCESS');
+}
+
+/**
+ * Verify Delegated Proctor OTP
+ */
+async function verifyProctorOtp(otpInput) {
+  verifySecurityOtpInternal(otpInput, 'PROCTOR_ACCESS');
   const admin = await getOrInitAdmin();
   return admin;
 }
@@ -225,6 +301,9 @@ module.exports = {
   getOrInitAdmin,
   verifyMasterPassword,
   updateMasterPassword,
+  requestSecurityOtp,
+  updateMasterPasswordWithOtp,
+  resetMasterPasswordWithOtp,
   incrementTokenVersion,
   requestProctorOtp,
   verifyProctorOtp,
@@ -232,3 +311,4 @@ module.exports = {
   verifyJwt,
   JWT_SECRET,
 };
+

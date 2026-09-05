@@ -109,21 +109,35 @@ exports.verifyOtp = async (req, res) => {
 };
 
 /**
- * Change Master Password
+ * Request OTP to Change Master Password
+ */
+exports.requestChangePasswordOtp = async (req, res) => {
+  try {
+    const { requestSecurityOtp } = require('../services/adminAuthService');
+    const result = await requestSecurityOtp('CHANGE_PASSWORD');
+    return res.json({
+      success: true,
+      message: 'Verification OTP dispatched to administrator email.',
+    });
+  } catch (err) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * Change Master Password (WITH Email OTP)
  */
 exports.changePassword = async (req, res) => {
   try {
-    const { currentPassword, newPassword } = req.body;
+    const { currentPassword, newPassword, otp } = req.body;
+    const { updateMasterPasswordWithOtp, generateAdminJwt } = require('../services/adminAuthService');
 
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ success: false, message: 'Current and new password are required.' });
+    if (!currentPassword || !newPassword || !otp) {
+      return res.status(400).json({ success: false, message: 'Current password, new password, and email OTP are required.' });
     }
 
-    await updateMasterPassword(currentPassword, newPassword);
+    const admin = await updateMasterPasswordWithOtp(currentPassword, newPassword, otp);
 
-    // Issue fresh cookie with updated token version
-    const admin = req.admin;
-    admin.tokenVersion += 1;
     const { token } = generateAdminJwt(admin, false);
 
     res.cookie('admin_session', token, {
@@ -135,8 +149,62 @@ exports.changePassword = async (req, res) => {
 
     return res.json({
       success: true,
-      message: 'Master password updated successfully. All other sessions invalidated.',
+      message: 'Master password updated successfully. All other active sessions have been revoked.',
       token,
+    });
+  } catch (err) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * Request OTP to Reset Master Password (Forgot Password Recovery)
+ */
+exports.requestResetPasswordOtp = async (req, res) => {
+  try {
+    const { requestSecurityOtp } = require('../services/adminAuthService');
+    const result = await requestSecurityOtp('RESET_PASSWORD');
+    return res.json({
+      success: true,
+      message: 'Account recovery OTP dispatched to administrator email.',
+    });
+  } catch (err) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * Reset Master Password via Email OTP (Forgot Password Recovery)
+ */
+exports.resetPasswordWithOtp = async (req, res) => {
+  try {
+    const { otp, newPassword } = req.body;
+    const { resetMasterPasswordWithOtp, generateAdminJwt } = require('../services/adminAuthService');
+
+    if (!otp || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Recovery OTP code and new password are required.' });
+    }
+
+    const admin = await resetMasterPasswordWithOtp(otp, newPassword);
+
+    const { token } = generateAdminJwt(admin, false);
+
+    res.cookie('admin_session', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    return res.json({
+      success: true,
+      message: 'Master password reset successfully! All unauthorized sessions revoked.',
+      token,
+      admin: {
+        email: admin.email,
+        mode: 'MASTER_ADMIN',
+        tokenVersion: admin.tokenVersion,
+      },
     });
   } catch (err) {
     return res.status(400).json({ success: false, message: err.message });

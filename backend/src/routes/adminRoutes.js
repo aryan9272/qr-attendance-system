@@ -8,9 +8,12 @@ const { verifyAdminToken } = require('../middleware/authMiddleware');
 router.post('/auth/login', adminController.loginMaster);
 router.post('/auth/request-otp', adminController.requestOtp);
 router.post('/auth/verify-otp', adminController.verifyOtp);
+router.post('/auth/request-reset-otp', adminController.requestResetPasswordOtp);
+router.post('/auth/reset-password-with-otp', adminController.resetPasswordWithOtp);
 
 // Protected Admin Auth Routes
 router.get('/me', verifyAdminToken, adminController.getMe);
+router.post('/auth/request-change-password-otp', verifyAdminToken, adminController.requestChangePasswordOtp);
 router.post('/auth/change-password', verifyAdminToken, adminController.changePassword);
 router.post('/auth/logout-all', verifyAdminToken, adminController.logoutAll);
 router.post('/auth/logout', adminController.logout);
