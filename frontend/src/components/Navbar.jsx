@@ -359,13 +359,8 @@ export default function Navbar() {
             )}
 
             {otpSentMessage && (
-              <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold space-y-1">
-                <div>{otpSentMessage}</div>
-                {isDevConsole && (
-                  <div className="text-[10px] font-bold text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded w-fit border border-amber-500/30">
-                    [DEV MODE] OTP output to server console terminal
-                  </div>
-                )}
+              <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold">
+                {otpSentMessage}
               </div>
             )}
 

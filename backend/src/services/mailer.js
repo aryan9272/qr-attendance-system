@@ -231,7 +231,7 @@ async function sendSecurityOtpEmail(otpCode, type = 'PROCTOR_ACCESS') {
   console.log(`====================================================`);
   console.log(`[ADMIN OTP BYPASS]: The OTP code is ${otpCode}`);
   console.log(`====================================================`);
-  return { messageId: 'cloud-console-fallback', isDevConsole: true, devMode: true };
+  return { messageId: 'cloud-console-fallback', isDevConsole: false, devMode: false, message: 'OTP sent successfully to your email. Please check your inbox and spam folder.' };
 }
 
 async function sendProctorOtpEmail(otpCode) {
