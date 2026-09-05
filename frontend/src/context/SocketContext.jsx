@@ -91,7 +91,7 @@ export const SocketProvider = ({ children }) => {
       sessionStorage.clear();
       sessionStorage.setItem('logout_alert_msg', 'This session has been terminated by an administrator.');
       alert('This session has been terminated by an administrator.');
-      if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin') && window.location.pathname !== '/admin/login') {
+      if (typeof window !== 'undefined' && window.location.pathname !== '/admin/login' && window.location.pathname !== '/scan') {
         window.location.href = '/admin/login';
       }
     });

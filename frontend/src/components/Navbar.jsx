@@ -62,7 +62,7 @@ export default function Navbar() {
           localStorage.removeItem('admin_user');
           sessionStorage.clear();
           setAdminUser(null);
-          if (location.pathname.startsWith('/admin') && location.pathname !== '/admin/login') {
+          if (location.pathname !== '/admin/login' && location.pathname !== '/scan') {
             navigate('/admin/login');
           }
           return;
@@ -90,7 +90,7 @@ export default function Navbar() {
         setAdminUser(null);
         sessionStorage.clear();
         sessionStorage.setItem('logout_alert_msg', 'This session has been terminated by an administrator.');
-        if (location.pathname.startsWith('/admin') && location.pathname !== '/admin/login') {
+        if (location.pathname !== '/admin/login' && location.pathname !== '/scan') {
           navigate('/admin/login');
         }
       }
@@ -110,7 +110,7 @@ export default function Navbar() {
             sessionStorage.clear();
             sessionStorage.setItem('logout_alert_msg', 'This session has been terminated by an administrator.');
             setAdminUser(null);
-            if (location.pathname.startsWith('/admin') && location.pathname !== '/admin/login') {
+            if (location.pathname !== '/admin/login' && location.pathname !== '/scan') {
               navigate('/admin/login');
             }
           }
