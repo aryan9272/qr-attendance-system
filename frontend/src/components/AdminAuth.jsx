@@ -14,7 +14,6 @@ import {
   Sparkles,
   Eye,
   EyeOff,
-  ShieldAlert,
 } from 'lucide-react';
 import { fetchWithFailover } from '../utils/apiResolver';
 
@@ -51,16 +50,11 @@ export default function AdminAuth() {
   // UI Status States
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const [logoutNotice, setLogoutNotice] = useState('');
   const [successState, setSuccessState] = useState(false);
 
-  // Clear stale sessions when visiting login page & check for logout notice
+  // Clear stale sessions when visiting login page
   useEffect(() => {
     try {
-      const notice = sessionStorage.getItem('logout_notice');
-      if (notice) {
-        setLogoutNotice(notice);
-      }
       localStorage.removeItem('admin_token');
       localStorage.removeItem('admin_user');
       sessionStorage.clear();
@@ -230,16 +224,6 @@ export default function AdminAuth() {
         </div>
 
         {/* Alerts & Feedback */}
-        {logoutNotice && (
-          <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/40 text-xs font-mono text-amber-300 space-y-1 animate-fadeIn">
-            <div className="flex items-center gap-2 font-bold text-amber-400">
-              <ShieldAlert className="w-4 h-4" />
-              <span>Session Revocation Notice</span>
-            </div>
-            <p className="leading-relaxed text-[11px]">{logoutNotice}</p>
-          </div>
-        )}
-
         {errorMessage && (
           <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/40 text-xs font-mono text-rose-300 space-y-1 animate-fadeIn">
             <div className="flex items-center gap-2 font-bold text-rose-400">
