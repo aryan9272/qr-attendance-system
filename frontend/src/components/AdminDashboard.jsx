@@ -635,9 +635,8 @@ export default function AdminDashboard() {
                 )}
 
                 <div className="mt-3 flex flex-col items-center justify-center gap-1">
-                  <span className="text-cyan-400 font-mono font-bold text-xs tracking-wider">ProxyQr Admin Sentinel</span>
-                  <div className="flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-slate-900/90 border border-cyan-500/20 text-[11px] font-mono shadow-[0_0_10px_rgba(6,182,212,0.1)]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/90 border border-cyan-500/30 text-xs font-mono shadow-[0_0_12px_rgba(6,182,212,0.15)]">
+                    <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
                     <span className="text-slate-400 font-sans">By</span>
                     <span className="text-cyan-300 font-bold tracking-wide">Aryan Kale</span>
                   </div>
