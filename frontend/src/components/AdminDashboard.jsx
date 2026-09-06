@@ -30,6 +30,7 @@ import {
   Mail,
   GraduationCap,
   BookOpen,
+  Eye,
 } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
 import { fetchWithFailover } from '../utils/apiResolver';
@@ -106,10 +107,10 @@ export default function AdminDashboard() {
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [editingAttendee, setEditingAttendee] = useState(null);
 
-  // Create Session Form State
-  const [newLabIdentifier, setNewLabIdentifier] = useState('Lab 101');
-  const [newTitle, setNewTitle] = useState('CS202: Advanced Operating Systems Lab');
-  const [newProctorName, setNewProctorName] = useState('Prof. Alan Turing');
+  // Create Session Form State (Initialized empty with clean placeholders)
+  const [newLabIdentifier, setNewLabIdentifier] = useState('');
+  const [newTitle, setNewTitle] = useState('');
+  const [newPresenterName, setNewPresenterName] = useState('');
   const [requireMobile, setRequireMobile] = useState(false);
 
   // Emergency Manual Intake Form State
@@ -212,6 +213,10 @@ export default function AdminDashboard() {
   // Create Session Submit
   const handleCreateSession = async (e) => {
     e.preventDefault();
+    if (!newLabIdentifier.trim() || !newTitle.trim()) {
+      alert('Lab Identifier and Session Title are required.');
+      return;
+    }
     try {
       const token = localStorage.getItem('admin_token');
       const { res, data } = await fetchWithFailover('/api/admin/sessions/create', {
@@ -222,22 +227,113 @@ export default function AdminDashboard() {
           'x-admin-token': token,
         },
         body: JSON.stringify({
-          labIdentifier: newLabIdentifier,
-          title: newTitle,
-          proctorName: newProctorName,
+          labIdentifier: newLabIdentifier.trim(),
+          title: newTitle.trim(),
+          proctorName: (newPresenterName || 'Faculty In-Charge').trim(),
+          presenterName: (newPresenterName || 'Faculty In-Charge').trim(),
           customFields: { requireMobileNumber: requireMobile },
         }),
       });
 
-      if (data?.success && data?.session) {
+      if (data?.success) {
+        const createdId = data.sessionId || data.session?.sessionId || data.event?.sessionId;
         setIsCreateModalOpen(false);
-        fetchSessions();
-        handleSelectSession(data.session.sessionId);
+        setNewLabIdentifier('');
+        setNewTitle('');
+        setNewPresenterName('');
+        setRequireMobile(false);
+
+        await fetchSessions();
+        if (createdId) {
+          handleSelectSession(createdId);
+        }
       } else {
-        alert(data.message || 'Failed to create session.');
+        alert(data?.message || 'Failed to create session.');
       }
     } catch (err) {
       alert('Error creating session: ' + err.message);
+    }
+  };
+
+  // Switch to attendance roster of a historical session
+  const handleViewHistoricalSession = (sessionId) => {
+    if (!sessionId) return;
+    const cleanId = sessionId.toUpperCase();
+    setSelectedSessionId(cleanId);
+    fetchRoster(cleanId);
+    joinSession(cleanId);
+    setActiveTab('roster');
+  };
+
+  // Export Clean, Auto-Formatted SheetJS Excel File
+  const handleExportExcel = async (targetSessionId = null) => {
+    try {
+      const sid = (targetSessionId || selectedSessionId).toUpperCase();
+      let rosterData = attendeesRoster;
+
+      // If exporting a different session from history tab, fetch its roster
+      if (targetSessionId && targetSessionId.toUpperCase() !== selectedSessionId.toUpperCase()) {
+        const token = localStorage.getItem('admin_token');
+        const { data } = await fetchWithFailover(`/api/attendance/stats/${sid}`, {
+          headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
+        });
+        if (data?.success && data?.stats) {
+          rosterData = data.stats.recent || [];
+        }
+      }
+
+      if (!rosterData || rosterData.length === 0) {
+        alert(`No verified attendee records found for session ${sid}.`);
+        return;
+      }
+
+      const exportData = rosterData.map((item, index) => ({
+        'S.No': index + 1,
+        'Session ID': item.sessionId || sid,
+        'Student Name': item.studentName || 'N/A',
+        'Registration No / PRN': item.regNo || 'N/A',
+        'Email Address': item.email || 'N/A',
+        'Academic Year': item.year || 'N/A',
+        'Branch / Department': item.branch || 'N/A',
+        'Mobile Number': item.mobileNumber || 'N/A',
+        'Verification Status': item.verificationMode === 'ADMIN_MANUAL_OVERRIDE'
+          ? `Manual Pass (${item.overrideReason || 'Admin Approved'})`
+          : item.verificationMode === 'SUSPICIOUS_PROXY'
+          ? 'Suspicious Proxy'
+          : 'GPS Verified',
+        'GPS Distance': `${item.distanceFromTargetMeters || 0} meters`,
+        'Attendance Date & Time': new Date(item.timestamp || Date.now()).toLocaleString('en-IN', {
+          dateStyle: 'medium',
+          timeStyle: 'medium',
+        }),
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+
+      // Auto-fit Column Widths for Readable & Formatted Excel Output
+      worksheet['!cols'] = [
+        { wch: 6 },  // S.No
+        { wch: 16 }, // Session ID
+        { wch: 24 }, // Student Name
+        { wch: 22 }, // Registration No / PRN
+        { wch: 32 }, // Email Address
+        { wch: 16 }, // Academic Year
+        { wch: 26 }, // Branch / Department
+        { wch: 16 }, // Mobile Number
+        { wch: 28 }, // Verification Status
+        { wch: 16 }, // GPS Distance
+        { wch: 26 }, // Attendance Date & Time
+      ];
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, `Attendance_${sid}`);
+
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const filename = `Attendance_Report_${sid}_${dateStr}.xlsx`;
+      XLSX.writeFile(workbook, filename);
+    } catch (err) {
+      console.error('[Export Excel Error]:', err);
+      alert('Error exporting Excel report: ' + err.message);
     }
   };
 
@@ -395,37 +491,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // Export SheetJS Excel File with Audit Log
-  const handleExportExcel = () => {
-    if (attendeesRoster.length === 0) {
-      alert('No verified attendees recorded for this session yet.');
-      return;
-    }
-
-    const exportData = attendeesRoster.map((item, index) => ({
-      'S.No': index + 1,
-      'Session ID': item.sessionId,
-      'Student Name': item.studentName,
-      'Registration No / PRN': item.regNo,
-      'Email Address': item.email,
-      'Academic Year': item.year || 'N/A',
-      'Branch / Major': item.branch || 'N/A',
-      'Mobile Phone': item.mobileNumber || 'N/A',
-      'Verification Mode': item.verificationMode,
-      'Override Reason': item.overrideReason || 'N/A',
-      'Distance (Meters)': item.distanceFromTargetMeters || 0,
-      'Last Edited By': item.editedBy || 'N/A',
-      'Timestamp': new Date(item.timestamp).toLocaleString(),
-    }));
-
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, `Session_${selectedSessionId}`);
-
-    const filename = `ProxyQr_Roster_${selectedSessionId}_${new Date().toISOString().slice(0, 10)}.xlsx`;
-    XLSX.writeFile(workbook, filename);
-  };
-
   // Dynamic QR URL Calculation for Vercel / Production
   const getAppBaseUrl = () => {
     if (import.meta.env.VITE_APP_URL) {
@@ -494,7 +559,7 @@ export default function AdminDashboard() {
             }`}
           >
             <Radio className="w-4 h-4" />
-            <span>[ Active Session ]</span>
+            <span>[ Current QR Session ]</span>
           </button>
 
           <button
@@ -506,7 +571,7 @@ export default function AdminDashboard() {
             }`}
           >
             <Users className="w-4 h-4" />
-            <span>[ Attendees Roster & Intake ]</span>
+            <span>[ Current Session Attendance ]</span>
           </button>
 
           <button
@@ -525,7 +590,13 @@ export default function AdminDashboard() {
         {/* Action Controls */}
         <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
           <button
-            onClick={() => setIsCreateModalOpen(true)}
+            onClick={() => {
+              setNewLabIdentifier('');
+              setNewTitle('');
+              setNewPresenterName('');
+              setRequireMobile(false);
+              setIsCreateModalOpen(true);
+            }}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-mono font-bold transition-all cursor-pointer shadow-[0_0_15px_rgba(6,182,212,0.15)]"
           >
             <Plus className="w-4 h-4" />
@@ -533,7 +604,7 @@ export default function AdminDashboard() {
           </button>
 
           <button
-            onClick={handleExportExcel}
+            onClick={() => handleExportExcel(selectedSessionId)}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold transition-all cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.15)]"
           >
             <FileSpreadsheet className="w-4 h-4" />
@@ -725,9 +796,53 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* TAB 2: ATTENDEES ROSTER & INTAKE */}
+      {/* TAB 2: CURRENT SESSION ATTENDANCE */}
       {activeTab === 'roster' && (
         <div className="space-y-6 animate-fadeIn">
+          {/* Active Session Attendance Banner & Selector */}
+          <div className="glass-panel p-5 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4 border-l-4 border-l-cyan-500">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+                <Users className="w-5 h-5" />
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-xs font-mono text-cyan-400 font-bold flex items-center gap-2">
+                  <span className="bg-slate-900 px-2 py-0.5 rounded border border-slate-800 text-white">{selectedSessionId}</span>
+                  <span>•</span>
+                  <span>{qrData?.labIdentifier || 'Lab Room'}</span>
+                </div>
+                <h3 className="text-lg font-bold text-white font-display">
+                  {qrData?.title || 'Current Session Attendance Roster'}
+                </h3>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
+              <div className="w-full sm:w-auto flex items-center gap-2">
+                <span className="text-xs font-mono text-slate-400 whitespace-nowrap">Session:</span>
+                <select
+                  value={selectedSessionId}
+                  onChange={(e) => handleSelectSession(e.target.value)}
+                  className="w-full sm:w-auto px-3.5 py-2 rounded-xl glass-input text-xs font-mono text-cyan-300 bg-slate-900 border border-slate-700"
+                >
+                  {sessionsList.map((s) => (
+                    <option key={s.sessionId} value={s.sessionId}>
+                      {s.sessionId} — {s.labIdentifier} ({s.title})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                onClick={() => handleExportExcel(selectedSessionId)}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold transition-all cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.15)]"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>Export Attendance Sheet</span>
+              </button>
+            </div>
+          </div>
+
           {/* Search Bar + Filters + Manual Intake Trigger */}
           <div className="glass-panel p-5 rounded-3xl space-y-4">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -738,7 +853,7 @@ export default function AdminDashboard() {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Fuzzy Search Name, PRN, Email..."
+                  placeholder="Search Name, PRN, Email..."
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-xs font-mono"
                 />
               </div>
@@ -888,20 +1003,27 @@ export default function AdminDashboard() {
                   <tr className="bg-slate-900/90 text-slate-400 border-b border-slate-800">
                     <th className="p-4">Session ID</th>
                     <th className="p-4">Lab / Room</th>
-                    <th className="p-4">Title</th>
-                    <th className="p-4">Proctor</th>
+                    <th className="p-4">Session Title</th>
+                    <th className="p-4">Faculty / Instructor</th>
                     <th className="p-4">Total Attendees</th>
                     <th className="p-4">Status</th>
-                    <th className="p-4 text-right">Date Created</th>
+                    <th className="p-4">Date Created</th>
+                    <th className="p-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {sessionsList.map((sess) => (
-                    <tr key={sess.sessionId} className="hover:bg-slate-900/40 transition-colors">
-                      <td className="p-4 font-bold text-cyan-300">{sess.sessionId}</td>
-                      <td className="p-4 text-slate-200">{sess.labIdentifier}</td>
+                    <tr
+                      key={sess.sessionId}
+                      onClick={() => handleViewHistoricalSession(sess.sessionId)}
+                      className="hover:bg-slate-900/60 transition-colors cursor-pointer group"
+                    >
+                      <td className="p-4 font-bold text-cyan-300 font-mono group-hover:text-cyan-200">
+                        {sess.sessionId}
+                      </td>
+                      <td className="p-4 text-slate-200 font-mono">{sess.labIdentifier}</td>
                       <td className="p-4 font-bold text-white font-sans">{sess.title}</td>
-                      <td className="p-4 text-slate-400">{sess.proctorName}</td>
+                      <td className="p-4 text-slate-300 font-sans">{sess.proctorName || sess.presenterName || 'Faculty In-Charge'}</td>
                       <td className="p-4 font-bold text-emerald-400">{sess.totalAttendees || 0}</td>
                       <td className="p-4">
                         <span
@@ -916,8 +1038,28 @@ export default function AdminDashboard() {
                           {sess.status}
                         </span>
                       </td>
-                      <td className="p-4 text-right text-slate-400">
-                        {new Date(sess.createdAt).toLocaleString()}
+                      <td className="p-4 text-slate-400">
+                        {new Date(sess.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                      </td>
+                      <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleViewHistoricalSession(sess.sessionId)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-mono font-semibold transition-all cursor-pointer shadow-sm"
+                            title="View Session Attendance Dashboard"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>View Attendance</span>
+                          </button>
+                          <button
+                            onClick={() => handleExportExcel(sess.sessionId)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-semibold transition-all cursor-pointer shadow-sm"
+                            title="Download Formatted Excel Attendance Sheet"
+                          >
+                            <FileSpreadsheet className="w-3.5 h-3.5" />
+                            <span>Download Sheet</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -996,31 +1138,31 @@ export default function AdminDashboard() {
                   type="text"
                   value={newLabIdentifier}
                   onChange={(e) => setNewLabIdentifier(e.target.value)}
-                  placeholder="e.g. Lab 101, Audi-2"
+                  placeholder="e.g. CN Lab, Lab 101, Audi-2"
                   required
                   className="w-full px-4 py-2.5 rounded-xl glass-input text-cyan-300 font-mono"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-semibold block">Session / Event Title</label>
+                <label className="text-slate-300 font-semibold block">Session / Course Title</label>
                 <input
                   type="text"
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="e.g. CS202 Lab, TCS Aptitude Mock"
+                  placeholder="e.g. Computer Networks Practical, CS301 Lecture"
                   required
                   className="w-full px-4 py-2.5 rounded-xl glass-input text-slate-200 font-sans"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-semibold block">Proctor / In-Charge Name</label>
+                <label className="text-slate-300 font-semibold block">Faculty / Instructor Name</label>
                 <input
                   type="text"
-                  value={newProctorName}
-                  onChange={(e) => setNewProctorName(e.target.value)}
-                  placeholder="Prof. Alan Turing"
+                  value={newPresenterName}
+                  onChange={(e) => setNewPresenterName(e.target.value)}
+                  placeholder="e.g. Dr. Alan Turing / Prof. Smith"
                   className="w-full px-4 py-2.5 rounded-xl glass-input text-slate-200 font-sans"
                 />
               </div>
@@ -1047,7 +1189,7 @@ export default function AdminDashboard() {
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold font-display shadow-[0_0_20px_rgba(6,182,212,0.4)]"
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold font-display shadow-[0_0_20px_rgba(6,182,212,0.4)] cursor-pointer"
                 >
                   Initialize Session
                 </button>

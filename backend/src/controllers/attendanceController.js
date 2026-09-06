@@ -3,25 +3,41 @@ const { decryptToken } = require('../services/cryptoService');
 const { activeSessions, startSession, pauseSession, terminateSession, rotateToken } = require('../services/socketService');
 const Event = require('../models/Event');
 const Attendance = require('../models/Attendance');
+const { getIsConnected } = require('../config/db');
 
 /**
  * Generate Unique Session ID: [SanitizedLabCode]-[RandomNanoID]
- * Example: LAB101-X7K9
+ * Example: CNLAB-8F3K
  */
 async function generateUniqueSessionId(labIdentifier) {
   const cleanLab = (labIdentifier || 'LAB')
     .toUpperCase()
-    .replace(/[^A-Z0-0]/g, '')
+    .replace(/[^A-Z0-9]/g, '')
     .slice(0, 8) || 'LAB';
 
   let sessionId = '';
   let exists = true;
+  let attempts = 0;
 
-  while (exists) {
+  while (exists && attempts < 20) {
+    attempts++;
     const randomSuffix = crypto.randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
     sessionId = `${cleanLab}-${randomSuffix}`;
-    const found = await Event.findOne({ sessionId });
-    if (!found) exists = false;
+
+    if (activeSessions.has(sessionId)) {
+      continue;
+    }
+
+    if (getIsConnected()) {
+      try {
+        const found = await Event.findOne({ sessionId });
+        if (!found) exists = false;
+      } catch (e) {
+        exists = false;
+      }
+    } else {
+      exists = false;
+    }
   }
 
   return sessionId;
@@ -226,30 +242,42 @@ exports.verifyAttendance = async (req, res) => {
  */
 exports.createSession = async (req, res) => {
   try {
-    const { labIdentifier, title, proctorName, customFields } = req.body;
+    const { labIdentifier, title, proctorName, presenterName, customFields } = req.body;
 
     if (!labIdentifier || !title) {
       return res.status(400).json({ success: false, message: 'Lab Identifier and Session Title are required.' });
     }
 
     const sessionId = await generateUniqueSessionId(labIdentifier);
+    const facultyName = (presenterName || proctorName || 'Faculty In-Charge').trim();
 
-    const eventDoc = await Event.create({
+    let eventData = {
       sessionId,
       labIdentifier: labIdentifier.trim(),
       title: title.trim(),
-      proctorName: (proctorName || 'Admin In-Charge').trim(),
+      proctorName: facultyName,
       status: 'PAUSED',
       allowedRadiusMeters: 50,
       customFields: customFields || { requireMobileNumber: false, requireWifiVerification: false },
-    });
+    };
 
-    // Initialize in Socket.IO memory
+    if (getIsConnected()) {
+      try {
+        const doc = await Event.create(eventData);
+        if (doc && doc.toObject) {
+          eventData = doc.toObject();
+        }
+      } catch (e) {
+        console.warn('[createSession] DB save error, running in memory:', e.message);
+      }
+    }
+
+    // Initialize in Socket.IO activeSessions memory
     activeSessions.set(sessionId, {
-      sessionId: eventDoc.sessionId,
-      labIdentifier: eventDoc.labIdentifier,
-      title: eventDoc.title,
-      proctorName: eventDoc.proctorName,
+      sessionId: eventData.sessionId,
+      labIdentifier: eventData.labIdentifier,
+      title: eventData.title,
+      proctorName: eventData.proctorName,
       latitude: 28.6139,
       longitude: 77.2090,
       allowedRadiusMeters: 50,
@@ -260,16 +288,19 @@ exports.createSession = async (req, res) => {
       qrUrl: null,
       tokenCreatedAt: Date.now(),
       status: 'PAUSED',
-      customFields: eventDoc.customFields,
+      customFields: eventData.customFields,
     });
 
     return res.status(201).json({
       success: true,
-      message: 'Session created successfully.',
-      session: eventDoc,
+      message: `Session ${sessionId} created successfully!`,
+      event: eventData,
+      session: eventData,
+      sessionId,
     });
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+    console.error('[createSession Error]:', err);
+    return res.status(500).json({ success: false, message: err.message || 'Failed to create session.' });
   }
 };
 
@@ -473,7 +504,7 @@ exports.getSessionHistory = async (req, res) => {
   }
 };
 
-const { getIsConnected } = require('../config/db');
+
 
 /**
  * Public / Admin: Get Events List

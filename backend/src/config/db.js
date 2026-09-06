@@ -16,8 +16,6 @@ const connectDB = async () => {
     console.log(`[MongoDB] Connected successfully: ${mongoose.connection.host}`);
   } catch (error) {
     isConnected = false;
-    // Disable buffering so queries fail-fast (0ms) and fall back to in-memory mode
-    mongoose.set('bufferCommands', false);
     console.warn(`[MongoDB Warning] Could not connect to MongoDB (${error.message}). Running in hybrid/in-memory fallback mode.`);
   }
 };
