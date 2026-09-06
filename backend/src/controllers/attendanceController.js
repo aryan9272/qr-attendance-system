@@ -310,7 +310,10 @@ exports.createSession = async (req, res) => {
 exports.startSession = async (req, res) => {
   try {
     const { sessionId } = req.body;
-    const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
+    if (!sessionId) {
+      return res.status(400).json({ success: false, message: 'Session ID is required.' });
+    }
+    const targetId = String(sessionId).trim().toUpperCase();
 
     startSession(req.io, targetId);
 
@@ -326,7 +329,10 @@ exports.startSession = async (req, res) => {
 exports.pauseSession = async (req, res) => {
   try {
     const { sessionId } = req.body;
-    const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
+    if (!sessionId) {
+      return res.status(400).json({ success: false, message: 'Session ID is required.' });
+    }
+    const targetId = String(sessionId).trim().toUpperCase();
 
     pauseSession(req.io, targetId);
 
@@ -342,7 +348,10 @@ exports.pauseSession = async (req, res) => {
 exports.terminateSession = async (req, res) => {
   try {
     const { sessionId } = req.body;
-    const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
+    if (!sessionId) {
+      return res.status(400).json({ success: false, message: 'Session ID is required.' });
+    }
+    const targetId = String(sessionId).trim().toUpperCase();
 
     terminateSession(req.io, targetId);
 
@@ -516,35 +525,11 @@ exports.getEvents = async (req, res) => {
       events = await Event.find({ status: { $ne: 'TERMINATED' } }).sort({ createdAt: -1 });
     }
 
-    if (!events || events.length === 0) {
-      events = [
-        {
-          sessionId: 'LAB101-X7K9',
-          labIdentifier: 'Lab 101',
-          title: 'CS101: Data Structures & Algorithms',
-          proctorName: 'Admin In-Charge',
-          status: 'PAUSED',
-          allowedRadiusMeters: 50,
-          customFields: { requireMobileNumber: false },
-        },
-      ];
-    }
-
-    return res.json({ success: true, events });
+    return res.json({ success: true, events: events || [] });
   } catch (err) {
     return res.json({
       success: true,
-      events: [
-        {
-          sessionId: 'LAB101-X7K9',
-          labIdentifier: 'Lab 101',
-          title: 'CS101: Data Structures & Algorithms',
-          proctorName: 'Admin In-Charge',
-          status: 'PAUSED',
-          allowedRadiusMeters: 50,
-          customFields: { requireMobileNumber: false },
-        },
-      ],
+      events: [],
     });
   }
 };
@@ -555,7 +540,10 @@ exports.getEvents = async (req, res) => {
 exports.getAttendanceStats = async (req, res) => {
   try {
     const { eventId } = req.params;
-    const targetSessionId = (eventId || 'CS101-LECTURE').toUpperCase();
+    if (!eventId || eventId === 'undefined' || eventId === 'null') {
+      return res.json({ success: true, stats: { count: 0, recent: [] } });
+    }
+    const targetSessionId = String(eventId).trim().toUpperCase();
 
     let count = 0;
     let recent = [];

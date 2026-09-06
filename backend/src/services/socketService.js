@@ -65,7 +65,19 @@ function initSocketService(io) {
 
     // Join isolated session room
     socket.on('join-session', async (data) => {
-      const sessionId = typeof data === 'string' ? data.toUpperCase() : (data?.sessionId || 'LAB101-X7K9').toUpperCase();
+      const sessionId = typeof data === 'string'
+        ? data.trim().toUpperCase()
+        : (data?.sessionId ? String(data.sessionId).trim().toUpperCase() : null);
+
+      if (!sessionId) {
+        socket.emit('qr-update', {
+          sessionId: null,
+          status: 'NO_ACTIVE_SESSION',
+          message: 'No session specified.',
+        });
+        return;
+      }
+
       socket.join(`session:${sessionId}`);
 
       let session = activeSessions.get(sessionId);
@@ -74,7 +86,7 @@ function initSocketService(io) {
       if (!session && getIsConnected()) {
         try {
           const dbEvent = await Event.findOne({ sessionId });
-          if (dbEvent) {
+          if (dbEvent && dbEvent.status !== 'TERMINATED') {
             session = {
               sessionId: dbEvent.sessionId,
               labIdentifier: dbEvent.labIdentifier,
@@ -97,26 +109,14 @@ function initSocketService(io) {
         } catch (e) {}
       }
 
-      // Default fallback if still missing
+      // If session does not exist, return NO_ACTIVE_SESSION
       if (!session) {
-        session = {
+        socket.emit('qr-update', {
           sessionId,
-          labIdentifier: 'Lab 101',
-          title: 'CS101: Data Structures & Algorithms',
-          proctorName: 'Admin In-Charge',
-          latitude: 28.6139,
-          longitude: 77.2090,
-          allowedRadiusMeters: 50,
-          tokenValiditySeconds: 60,
-          currentCountdown: 60,
-          currentToken: null,
-          previousToken: null,
-          qrUrl: null,
-          tokenCreatedAt: Date.now(),
-          status: 'PAUSED',
-          customFields: { requireMobileNumber: false, requireWifiVerification: false },
-        };
-        activeSessions.set(sessionId, session);
+          status: 'NO_ACTIVE_SESSION',
+          message: 'Session not found or has been terminated.',
+        });
+        return;
       }
 
       socket.emit('qr-update', {
@@ -138,13 +138,16 @@ function initSocketService(io) {
 
     // Backward compatibility alias for join-event
     socket.on('join-event', (data) => {
-      const sid = typeof data === 'string' ? data : data?.eventId || data?.sessionId || 'CS101-LECTURE';
-      socket.emit('join-session', { sessionId: sid });
+      const sid = typeof data === 'string' ? data : data?.eventId || data?.sessionId;
+      if (sid) {
+        socket.emit('join-session', { sessionId: sid });
+      }
     });
 
     // Admin Geofence Radius Slider Update
     socket.on('update-geofence-radius', ({ sessionId, allowedRadiusMeters }) => {
-      const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
+      if (!sessionId) return;
+      const targetId = String(sessionId).trim().toUpperCase();
       const radius = Number(allowedRadiusMeters) || 50;
 
       let session = activeSessions.get(targetId);
@@ -163,17 +166,20 @@ function initSocketService(io) {
     });
 
     socket.on('start-session', ({ sessionId }) => {
-      const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
+      if (!sessionId) return;
+      const targetId = String(sessionId).trim().toUpperCase();
       startSession(io, targetId);
     });
 
     socket.on('pause-session', ({ sessionId }) => {
-      const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
+      if (!sessionId) return;
+      const targetId = String(sessionId).trim().toUpperCase();
       pauseSession(io, targetId);
     });
 
     socket.on('force-rotate-qr', ({ sessionId }) => {
-      const targetId = (sessionId || 'LAB101-X7K9').toUpperCase();
+      if (!sessionId) return;
+      const targetId = String(sessionId).trim().toUpperCase();
       rotateToken(io, targetId);
     });
 

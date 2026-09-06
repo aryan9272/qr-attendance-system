@@ -307,12 +307,17 @@ export default function Navbar() {
                 <QrCode className="w-5 h-5 sm:w-6 sm:h-6" />
               </div>
 
-              <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3">
-                <span className="font-display font-black text-lg sm:text-xl tracking-tight text-white">
-                  ProxyQr
-                </span>
-                <span className="inline-flex items-center text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-slate-900 text-cyan-300 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.15)]">
-                  ADMIN DASHBOARD
+              <div className="flex flex-col">
+                <div className="flex items-center gap-2">
+                  <span className="font-display font-black text-lg sm:text-xl tracking-tight text-white">
+                    ProxyQr
+                  </span>
+                  <span className="inline-flex items-center text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-slate-900 text-cyan-300 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.15)]">
+                    ADMIN DASHBOARD
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono text-cyan-400 font-semibold tracking-wide">
+                  By Aryan Kale
                 </span>
               </div>
             </div>

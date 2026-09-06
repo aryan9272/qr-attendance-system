@@ -22,7 +22,7 @@ function encryptToken(payload, secretKey) {
   
   // Compact payload keys to minimize encrypted QR token length & block density
   const compactPayload = JSON.stringify({
-    e: payload.eventId || payload.e || 'CS101-LECTURE',
+    e: payload.sessionId || payload.eventId || payload.e || '',
     t: payload.timestamp || payload.t || Date.now(),
     n: crypto.randomBytes(4).toString('hex'), // 4-byte compact nonce
   });

@@ -24,7 +24,7 @@ const SocketContext = createContext({
   connected: false,
   qrData: null,
   countdown: 60,
-  currentSessionId: 'LAB101-X7K9',
+  currentSessionId: null,
   backendUrl: PUBLIC_BACKEND_URL,
   joinSession: () => {},
   forceRotateQR: () => {},
@@ -36,7 +36,7 @@ export const SocketProvider = ({ children }) => {
   const [connected, setConnected] = useState(false);
   const [qrData, setQrData] = useState(null);
   const [countdown, setCountdown] = useState(60);
-  const [currentSessionId, setCurrentSessionId] = useState('LAB101-X7K9');
+  const [currentSessionId, setCurrentSessionId] = useState(null);
   const backendUrl = getBackendUrl();
 
   useEffect(() => {
@@ -51,7 +51,9 @@ export const SocketProvider = ({ children }) => {
     newSocket.on('connect', () => {
       console.log('[Socket.IO Frontend] Connected successfully:', newSocket.id);
       setConnected(true);
-      newSocket.emit('join-session', { sessionId: currentSessionId });
+      if (currentSessionId) {
+        newSocket.emit('join-session', { sessionId: currentSessionId });
+      }
     });
 
     newSocket.on('disconnect', () => {
@@ -100,10 +102,11 @@ export const SocketProvider = ({ children }) => {
     return () => {
       newSocket.disconnect();
     };
-  }, [backendUrl]);
+  }, [backendUrl, currentSessionId]);
 
   const joinSession = (sessionId) => {
-    const cleanId = (sessionId || 'LAB101-X7K9').toUpperCase();
+    if (!sessionId) return;
+    const cleanId = String(sessionId).trim().toUpperCase();
     setCurrentSessionId(cleanId);
     if (socket && connected) {
       socket.emit('join-session', { sessionId: cleanId });

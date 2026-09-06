@@ -117,7 +117,7 @@ export default function StudentScanner() {
   const [year, setYear] = useState(YEARS[0]);
   const [branch, setBranch] = useState(DEPARTMENTS[0]);
   const [mobileNumber, setMobileNumber] = useState('');
-  const [sessionId, setSessionId] = useState('LAB101-X7K9');
+  const [sessionId, setSessionId] = useState('');
 
   // Silent Geolocation & GPS Accuracy State
   const [userLocation, setUserLocation] = useState({ latitude: 28.6139, longitude: 77.2090 });
@@ -403,13 +403,17 @@ export default function StudentScanner() {
           </div>
 
           <h2 className="font-display font-extrabold text-xl text-white">
-            {qrData?.title || 'CS202: Advanced Operating Systems Lab'}
+            {qrData?.title || 'ProxyQr Attendance Intake'}
           </h2>
 
           <div className="flex items-center justify-center gap-2 text-xs font-mono text-slate-400">
-            <span>Session: <strong className="text-cyan-300">{sessionId}</strong></span>
-            <span>•</span>
-            <span>{qrData?.labIdentifier || 'Lab 101'}</span>
+            {sessionId ? <span>Session: <strong className="text-cyan-300">{sessionId}</strong></span> : <span>Scan dynamic session QR</span>}
+            {qrData?.labIdentifier && (
+              <>
+                <span>•</span>
+                <span>{qrData.labIdentifier}</span>
+              </>
+            )}
           </div>
         </div>
 

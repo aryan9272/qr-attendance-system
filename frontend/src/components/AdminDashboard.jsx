@@ -85,7 +85,7 @@ export default function AdminDashboard() {
 
   // Sessions & Attendees Roster State
   const [sessionsList, setSessionsList] = useState([]);
-  const [selectedSessionId, setSelectedSessionId] = useState(currentSessionId || 'LAB101-X7K9');
+  const [selectedSessionId, setSelectedSessionId] = useState(currentSessionId || null);
   const [attendeesRoster, setAttendeesRoster] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
 
@@ -140,6 +140,17 @@ export default function AdminDashboard() {
       });
       if (data?.success && Array.isArray(data.events)) {
         setSessionsList(data.events);
+        if (data.events.length > 0) {
+          setSelectedSessionId((prev) => {
+            if (prev && data.events.some((e) => e.sessionId === prev)) {
+              return prev;
+            }
+            const activeEv = data.events.find((e) => e.status === 'ACTIVE') || data.events[0];
+            return activeEv ? activeEv.sessionId : null;
+          });
+        } else {
+          setSelectedSessionId(null);
+        }
       }
     } catch (e) {
       console.warn('[AdminDashboard] Fetch sessions error:', e);
@@ -147,8 +158,13 @@ export default function AdminDashboard() {
   };
 
   const fetchRoster = async (sessionId) => {
+    if (!sessionId) {
+      setAttendeesRoster([]);
+      setTotalCount(0);
+      return;
+    }
     try {
-      const sid = (sessionId || selectedSessionId).toUpperCase();
+      const sid = sessionId.toUpperCase();
       const token = localStorage.getItem('admin_token');
       const { res, data } = await fetchWithFailover(`/api/attendance/stats/${sid}`, {
         headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
@@ -615,21 +631,47 @@ export default function AdminDashboard() {
 
       {/* TAB 1: ACTIVE SESSION VIEWPORT */}
       {activeTab === 'active' && (
-        <div className="space-y-6 animate-fadeIn">
-          {/* Active Session Info Header */}
-          <div className="glass-panel p-5 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4 border-l-4 border-l-cyan-500">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-xs font-mono text-cyan-400">
-                <span className="font-bold text-white uppercase">{selectedSessionId}</span>
-                <span>•</span>
-                <span>{qrData?.labIdentifier || 'Lab 101'}</span>
-                <span>•</span>
-                <span>{qrData?.proctorName || 'Admin In-Charge'}</span>
-              </div>
-              <h2 className="font-display font-extrabold text-xl sm:text-2xl text-white">
-                {qrData?.title || 'CS202: Advanced Operating Systems Lab'}
-              </h2>
+        !selectedSessionId ? (
+          <div className="glass-panel p-8 sm:p-12 rounded-3xl text-center space-y-4 border border-cyan-500/30 my-6 animate-fadeIn">
+            <div className="p-4 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 w-16 h-16 mx-auto flex items-center justify-center shadow-[0_0_25px_rgba(6,182,212,0.2)]">
+              <Radio className="w-8 h-8 animate-pulse" />
             </div>
+            <div className="space-y-2">
+              <h3 className="text-xl sm:text-2xl font-bold font-display text-white">No Active Session Running</h3>
+              <p className="text-slate-400 font-mono text-xs max-w-md mx-auto">
+                No attendance session is currently active. Please click "New Session" to initialize a lab or lecture session, then start QR rotation.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setNewLabIdentifier('');
+                setNewTitle('');
+                setNewPresenterName('');
+                setRequireMobile(false);
+                setIsCreateModalOpen(true);
+              }}
+              className="px-6 py-3 rounded-2xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold text-xs font-mono shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all cursor-pointer inline-flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Create New Session</span>
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-6 animate-fadeIn">
+            {/* Active Session Info Header */}
+            <div className="glass-panel p-5 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4 border-l-4 border-l-cyan-500">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-xs font-mono text-cyan-400">
+                  <span className="font-bold text-white uppercase">{selectedSessionId}</span>
+                  <span>•</span>
+                  <span>{qrData?.labIdentifier || 'Lab Room'}</span>
+                  <span>•</span>
+                  <span>{qrData?.proctorName || 'Faculty In-Charge'}</span>
+                </div>
+                <h2 className="font-display font-extrabold text-xl sm:text-2xl text-white">
+                  {qrData?.title || 'Attendance Session'}
+                </h2>
+              </div>
 
             {/* Session Lifecycle Buttons */}
             <div className="flex items-center gap-3">
@@ -794,79 +836,92 @@ export default function AdminDashboard() {
             </div>
           </div>
         </div>
-      )}
+      )
+    )}
 
       {/* TAB 2: CURRENT SESSION ATTENDANCE */}
       {activeTab === 'roster' && (
-        <div className="space-y-6 animate-fadeIn">
-          {/* Active Session Attendance Banner & Selector */}
-          <div className="glass-panel p-5 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4 border-l-4 border-l-cyan-500">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
-                <Users className="w-5 h-5" />
-              </div>
-              <div className="space-y-0.5">
-                <div className="text-xs font-mono text-cyan-400 font-bold flex items-center gap-2">
-                  <span className="bg-slate-900 px-2 py-0.5 rounded border border-slate-800 text-white">{selectedSessionId}</span>
-                  <span>•</span>
-                  <span>{qrData?.labIdentifier || 'Lab Room'}</span>
-                </div>
-                <h3 className="text-lg font-bold text-white font-display">
-                  {qrData?.title || 'Current Session Attendance Roster'}
-                </h3>
-              </div>
+        !selectedSessionId ? (
+          <div className="glass-panel p-8 sm:p-12 rounded-3xl text-center space-y-4 border border-cyan-500/30 my-6 animate-fadeIn">
+            <div className="p-4 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 w-16 h-16 mx-auto flex items-center justify-center shadow-[0_0_25px_rgba(6,182,212,0.2)]">
+              <Users className="w-8 h-8" />
             </div>
-
-            <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-              <div className="w-full sm:w-auto flex items-center gap-2">
-                <span className="text-xs font-mono text-slate-400 whitespace-nowrap">Session:</span>
-                <select
-                  value={selectedSessionId}
-                  onChange={(e) => handleSelectSession(e.target.value)}
-                  className="w-full sm:w-auto px-3.5 py-2 rounded-xl glass-input text-xs font-mono text-cyan-300 bg-slate-900 border border-slate-700"
-                >
-                  {sessionsList.map((s) => (
-                    <option key={s.sessionId} value={s.sessionId}>
-                      {s.sessionId} — {s.labIdentifier} ({s.title})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <button
-                onClick={() => handleExportExcel(selectedSessionId)}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold transition-all cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.15)]"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>Export Attendance Sheet</span>
-              </button>
+            <div className="space-y-2">
+              <h3 className="text-xl sm:text-2xl font-bold font-display text-white">No Attendance Roster Selected</h3>
+              <p className="text-slate-400 font-mono text-xs max-w-md mx-auto">
+                No active or historical session is currently selected. Please create a new session or choose one from Session History.
+              </p>
             </div>
           </div>
-
-          {/* Search Bar + Filters + Manual Intake Trigger */}
-          <div className="glass-panel p-5 rounded-3xl space-y-4">
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-              {/* Fuzzy Search Field */}
-              <div className="relative w-full sm:w-80">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search Name, PRN, Email..."
-                  className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-xs font-mono"
-                />
+        ) : (
+          <div className="space-y-6 animate-fadeIn">
+            {/* Active Session Attendance Banner & Selector */}
+            <div className="glass-panel p-5 rounded-3xl flex flex-col md:flex-row md:items-center justify-between gap-4 border-l-4 border-l-cyan-500">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div className="space-y-0.5">
+                  <div className="text-xs font-mono text-cyan-400 font-bold flex items-center gap-2">
+                    <span className="bg-slate-900 px-2 py-0.5 rounded border border-slate-800 text-white">{selectedSessionId}</span>
+                    <span>•</span>
+                    <span>{qrData?.labIdentifier || 'Lab Room'}</span>
+                  </div>
+                  <h3 className="text-lg font-bold text-white font-display">
+                    {qrData?.title || 'Current Session Attendance Roster'}
+                  </h3>
+                </div>
               </div>
 
-              {/* Action Button: Emergency Manual Intake */}
-              <button
-                onClick={() => setIsManualModalOpen(true)}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-slate-950 font-display font-bold text-xs shadow-[0_0_20px_rgba(245,158,11,0.3)] transition-all cursor-pointer"
-              >
-                <Plus className="w-4 h-4 fill-slate-950" />
-                <span>+ Add Student Manually</span>
-              </button>
+              <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
+                <div className="w-full sm:w-auto flex items-center gap-2">
+                  <span className="text-xs font-mono text-slate-400 whitespace-nowrap">Session:</span>
+                  <select
+                    value={selectedSessionId}
+                    onChange={(e) => handleSelectSession(e.target.value)}
+                    className="w-full sm:w-auto px-3.5 py-2 rounded-xl glass-input text-xs font-mono text-cyan-300 bg-slate-900 border border-slate-700"
+                  >
+                    {sessionsList.map((s) => (
+                      <option key={s.sessionId} value={s.sessionId}>
+                        {s.sessionId} — {s.labIdentifier} ({s.title})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  onClick={() => handleExportExcel(selectedSessionId)}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold transition-all cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.15)]"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Download Excel</span>
+                </button>
+              </div>
             </div>
+
+            {/* Search Bar + Filters + Manual Intake Trigger */}
+            <div className="glass-panel p-5 rounded-3xl space-y-4">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="relative w-full sm:w-80">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search Name, PRN, Email..."
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-xs font-mono"
+                  />
+                </div>
+
+                {/* Action Button: Emergency Manual Intake */}
+                <button
+                  onClick={() => setIsManualModalOpen(true)}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-slate-950 font-display font-bold text-xs shadow-[0_0_20px_rgba(245,158,11,0.3)] transition-all cursor-pointer"
+                >
+                  <Plus className="w-4 h-4 fill-slate-950" />
+                  <span>+ Add Student Manually</span>
+                </button>
+              </div>
 
             {/* Filter Bar */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-800 text-xs font-mono">
@@ -984,7 +1039,8 @@ export default function AdminDashboard() {
             </div>
           </div>
         </div>
-      )}
+      )
+    )}
 
       {/* TAB 3: SESSION HISTORY */}
       {activeTab === 'history' && (
