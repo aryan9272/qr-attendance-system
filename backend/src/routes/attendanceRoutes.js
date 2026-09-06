@@ -23,6 +23,8 @@ router.post('/sessions/:id/end', verifyAdminToken, attendanceController.terminat
 router.post('/sessions/:id/terminate', verifyAdminToken, attendanceController.terminateSession);
 router.patch('/sessions/:id/end', verifyAdminToken, attendanceController.terminateSession);
 router.patch('/sessions/:id/terminate', verifyAdminToken, attendanceController.terminateSession);
+router.delete('/sessions/:sessionId', verifyAdminToken, attendanceController.deleteSession);
+router.delete('/sessions/:id', verifyAdminToken, attendanceController.deleteSession);
 router.get('/sessions/history', verifyAdminToken, attendanceController.getSessionHistory);
 
 // Roster Management & Overrides

@@ -57,30 +57,36 @@ export default function VerificationResultModal({ isOpen, onClose, result }) {
 
         {/* Body Breakdown Details */}
         <div className="space-y-3 bg-slate-950/80 p-4 rounded-2xl border border-slate-800 text-xs font-mono">
-          {isSuccess && result.data && (
+          {isSuccess && (
             <>
               <div className="flex justify-between py-1 border-b border-slate-800 text-slate-300">
-                <span className="text-slate-500">STUDENT ID:</span>
-                <span className="font-bold text-cyan-300">{result.data.user}</span>
+                <span className="text-slate-500">PRN / REG NO:</span>
+                <span className="font-bold text-cyan-300">
+                  {result.data?.user || result.data?.regNo || result.attendance?.regNo || result.attendance?.studentId || result.regNo || 'VERIFIED'}
+                </span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-800 text-slate-300">
                 <span className="text-slate-500">STUDENT NAME:</span>
-                <span className="font-bold text-slate-200">{result.data.userName}</span>
+                <span className="font-bold text-slate-200">
+                  {result.data?.userName || result.data?.studentName || result.attendance?.studentName || result.studentName || 'Student'}
+                </span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-800 text-slate-300">
-                <span className="text-slate-500">EVENT SESSION:</span>
-                <span className="font-bold text-slate-200">{result.data.event}</span>
+                <span className="text-slate-500">SESSION:</span>
+                <span className="font-bold text-slate-200">
+                  {result.data?.sessionTitle || result.data?.event || result.attendance?.sessionId || result.sessionId || 'Active Session'}
+                </span>
               </div>
               <div className="flex justify-between py-1 border-b border-slate-800 text-slate-300">
-                <span className="text-slate-500">GPS DISTANCE:</span>
+                <span className="text-slate-500">GEOFENCE STATUS:</span>
                 <span className="font-bold text-emerald-400">
-                  {result.data.distanceMeters} meters away (Allowed: {result.data.allowedRadiusMeters}m)
+                  {result.data?.distanceMeters ?? result.attendance?.distanceFromTargetMeters ?? 0}m away (Boundary: {result.data?.allowedRadiusMeters ?? 50}m)
                 </span>
               </div>
               <div className="flex justify-between py-1 text-slate-300">
-                <span className="text-slate-500">TOKEN AGE:</span>
+                <span className="text-slate-500">TIMESTAMP:</span>
                 <span className="font-bold text-cyan-400">
-                  {result.data.tokenAgeSeconds} seconds old (Fresh)
+                  {new Date(result.data?.timestamp || result.attendance?.timestamp || Date.now()).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                 </span>
               </div>
             </>
@@ -92,12 +98,12 @@ export default function VerificationResultModal({ isOpen, onClose, result }) {
                 <AlertOctagon className="w-5 h-5 text-rose-400" />
                 <span>Error Reason:</span>
               </div>
-              <p className="text-xs leading-relaxed">{result.error}</p>
+              <p className="text-xs leading-relaxed">{result.error || 'Verification criteria could not be satisfied.'}</p>
 
               {result.distanceMeters !== undefined && (
                 <div className="pt-2 text-[11px] text-slate-300 border-t border-rose-900/60">
                   <div>Your distance: <strong className="text-rose-400">{result.distanceMeters} meters</strong></div>
-                  <div>Max allowed geofence radius: <strong className="text-emerald-400">{result.allowedRadiusMeters} meters</strong></div>
+                  <div>Max allowed geofence boundary: <strong className="text-emerald-400">{result.allowedRadiusMeters || 50} meters</strong></div>
                 </div>
               )}
             </div>

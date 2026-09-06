@@ -32,6 +32,8 @@ import {
   BookOpen,
   Eye,
   Calendar,
+  Trash2,
+  RefreshCw,
 } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
 import { fetchWithFailover } from '../utils/apiResolver';
@@ -120,6 +122,7 @@ export default function AdminDashboard() {
   const [newTitle, setNewTitle] = useState('');
   const [newPresenterName, setNewPresenterName] = useState('');
   const [requireMobile, setRequireMobile] = useState(false);
+  const [isCreatingSession, setIsCreatingSession] = useState(false);
 
   // Emergency Manual Intake Form State
   const [manualName, setManualName] = useState('');
@@ -263,10 +266,12 @@ export default function AdminDashboard() {
   // Create Session Submit
   const handleCreateSession = async (e) => {
     e.preventDefault();
+    if (isCreatingSession) return;
     if (!newLabIdentifier.trim() || !newTitle.trim()) {
       alert('Lab Identifier and Session Title are required.');
       return;
     }
+    setIsCreatingSession(true);
     try {
       const token = localStorage.getItem('admin_token');
       const { res, data } = await fetchWithFailover('/api/admin/sessions/create', {
@@ -305,12 +310,48 @@ export default function AdminDashboard() {
           setSessionsList((prev) => [createdSession, ...prev.filter((s) => s.sessionId !== createdId)]);
           handleSelectSession(createdId);
         }
-        fetchSessions();
+        await fetchSessions();
       } else {
         alert(data?.message || 'Failed to create session.');
       }
     } catch (err) {
       alert('Error creating session: ' + err.message);
+    } finally {
+      setIsCreatingSession(false);
+    }
+  };
+
+  // Delete Session (from History)
+  const handleDeleteSession = async (sessionId, sessionTitle) => {
+    if (!sessionId) return;
+    const cleanId = sessionId.toUpperCase();
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete session ${cleanId} (${sessionTitle || 'Session'})?\n\nAll recorded attendance entries for this session will be permanently deleted.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      const { data } = await fetchWithFailover(`/api/admin/sessions/${cleanId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'x-admin-token': token,
+        },
+      });
+
+      if (data?.success) {
+        setSessionsList((prev) => prev.filter((s) => s.sessionId !== cleanId));
+        if (selectedSessionId === cleanId) {
+          setSelectedSessionId('');
+          setAttendeesRoster([]);
+        }
+        await fetchSessions();
+      } else {
+        alert(data?.message || 'Failed to delete session.');
+      }
+    } catch (err) {
+      alert('Error deleting session: ' + err.message);
     }
   };
 
@@ -592,14 +633,18 @@ export default function AdminDashboard() {
     if (!isSessionActive) return 'SESSION_PAUSED';
 
     const baseUrl = getAppBaseUrl();
+    const sid = (selectedSessionId || qrData?.sessionId || '').toUpperCase();
 
     if (qrData?.token) {
-      return `${baseUrl}/scan?token=${encodeURIComponent(qrData.token)}`;
+      return `${baseUrl}/scan?token=${encodeURIComponent(qrData.token)}${sid ? `&sessionId=${encodeURIComponent(sid)}` : ''}`;
     }
 
     if (qrData?.qrUrl) {
       try {
         const urlObj = new URL(qrData.qrUrl);
+        if (sid && !urlObj.searchParams.has('sessionId')) {
+          urlObj.searchParams.set('sessionId', sid);
+        }
         return `${baseUrl}${urlObj.pathname}${urlObj.search}`;
       } catch (e) {
         return qrData.qrUrl;
@@ -1389,6 +1434,14 @@ export default function AdminDashboard() {
                               <FileSpreadsheet className="w-3.5 h-3.5" />
                               <span>Download Sheet</span>
                             </button>
+                            <button
+                              onClick={() => handleDeleteSession(sess.sessionId, sess.title)}
+                              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/25 text-rose-400 hover:text-rose-300 border border-rose-500/30 text-xs font-mono font-semibold transition-all cursor-pointer shadow-sm"
+                              title="Permanently Delete Session & Attendance"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Delete</span>
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -1520,9 +1573,17 @@ export default function AdminDashboard() {
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold font-display shadow-[0_0_20px_rgba(6,182,212,0.4)] cursor-pointer"
+                  disabled={isCreatingSession}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold font-display shadow-[0_0_20px_rgba(6,182,212,0.4)] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
                 >
-                  Initialize Session
+                  {isCreatingSession ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Creating Session...</span>
+                    </>
+                  ) : (
+                    <span>Initialize Session</span>
+                  )}
                 </button>
               </div>
             </form>

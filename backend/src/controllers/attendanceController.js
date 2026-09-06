@@ -63,20 +63,55 @@ exports.verifyAttendance = async (req, res) => {
       deviceUuid,
     } = req.body;
 
-    const targetSessionId = (sessionId || eventId || 'CS101-LECTURE').toUpperCase();
-    const cleanEmail = (email || '').trim().toLowerCase();
-    const cleanRegNo = (regNo || studentId || '').trim().toUpperCase();
-    const cleanName = (studentName || '').trim();
-
     if (!token) {
       return res.status(400).json({ success: false, errorType: 'MISSING_TOKEN', error: 'Missing security token.' });
     }
+
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanRegNo = (regNo || studentId || '').trim().toUpperCase();
+    const cleanName = (studentName || '').trim();
 
     if (!cleanRegNo || !cleanName || !cleanEmail) {
       return res.status(400).json({ success: false, errorType: 'MISSING_FIELDS', error: 'Student Name, Registration No, and Email are required.' });
     }
 
-    // 1. Check Session State in Memory / Database
+    // 1. Decrypt & Validate Dynamic AES Token (Allow 180s grace for students filling out details)
+    let tokenPayload = null;
+    try {
+      const decResult = decryptToken(token, 180);
+      if (!decResult || !decResult.isValid || !decResult.payload) {
+        return res.status(400).json({
+          success: false,
+          errorType: 'EXPIRED_TOKEN',
+          error: decResult?.error || 'Dynamic QR token has expired or is invalid. Please scan the current live QR code on the projector.',
+        });
+      }
+      tokenPayload = decResult.payload;
+    } catch (e) {
+      return res.status(400).json({
+        success: false,
+        errorType: 'EXPIRED_TOKEN',
+        error: 'Dynamic QR token has expired or is invalid. Please scan the current live QR code on the projector.',
+      });
+    }
+
+    // Resolve authoritative Target Session ID from Token or Request
+    const tokenSessionId = (tokenPayload.sessionId || tokenPayload.eventId || tokenPayload.e || '').toUpperCase();
+    let targetSessionId = (sessionId || eventId || '').toUpperCase();
+
+    if (!targetSessionId || targetSessionId === 'CS101-LECTURE') {
+      targetSessionId = tokenSessionId || 'CS101-LECTURE';
+    }
+
+    if (tokenSessionId && targetSessionId && tokenSessionId !== targetSessionId) {
+      return res.status(400).json({
+        success: false,
+        errorType: 'INVALID_SESSION_TOKEN',
+        error: `QR code belongs to session ${tokenSessionId}, not ${targetSessionId}.`,
+      });
+    }
+
+    // 2. Check Session State in Memory / Database
     let session = activeSessions.get(targetSessionId);
     if (!session) {
       const dbEvent = await Event.findOne({ sessionId: targetSessionId });
@@ -89,50 +124,21 @@ exports.verifyAttendance = async (req, res) => {
           longitude: 77.2090,
           allowedRadiusMeters: dbEvent.allowedRadiusMeters || 50,
           status: dbEvent.status,
+          isEnded: dbEvent.isEnded,
           customFields: dbEvent.customFields,
         };
         activeSessions.set(targetSessionId, session);
       }
     }
 
-    if (!session || session.status === 'PAUSED' || session.status === 'TERMINATED') {
-      const isTerminated = !session || session.status === 'TERMINATED';
+    if (!session || session.status === 'PAUSED' || session.status === 'TERMINATED' || session.isEnded) {
+      const isTerminated = !session || session.status === 'TERMINATED' || session.isEnded;
       return res.status(400).json({
         success: false,
         errorType: isTerminated ? 'SESSION_TERMINATED' : 'SESSION_PAUSED',
         error: isTerminated
           ? 'Session permanently closed. This attendance session has been ended by the Admin.'
           : 'Attendance session is currently paused by the Admin.',
-      });
-    }
-
-    // 2. Decrypt & Validate Dynamic AES Token (Dual Token 60s + 20s Grace Window)
-    let tokenPayload = null;
-    try {
-      tokenPayload = decryptToken(token);
-    } catch (e) {
-      return res.status(400).json({
-        success: false,
-        errorType: 'EXPIRED_TOKEN',
-        error: 'Dynamic QR token has expired or is invalid. Please scan the current live QR code on the projector.',
-      });
-    }
-
-    if (!tokenPayload || (tokenPayload.sessionId && tokenPayload.sessionId.toUpperCase() !== targetSessionId && tokenPayload.eventId !== targetSessionId)) {
-      return res.status(400).json({
-        success: false,
-        errorType: 'INVALID_SESSION_TOKEN',
-        error: 'QR code does not belong to this active session.',
-      });
-    }
-
-    // 3-Minute Grace Period Check (Total 180 seconds max to allow typing time)
-    const tokenAgeMs = Date.now() - (tokenPayload.timestamp || 0);
-    if (tokenAgeMs > 180 * 1000) {
-      return res.status(400).json({
-        success: false,
-        errorType: 'EXPIRED_TOKEN',
-        error: 'Dynamic QR token expired over 3 mins ago. Scan the fresh projector QR code.',
       });
     }
 
@@ -225,10 +231,24 @@ exports.verifyAttendance = async (req, res) => {
       });
     }
 
+    const tokenAgeSeconds = Math.max(0, Math.floor((Date.now() - (tokenPayload.timestamp || Date.now())) / 1000));
+
     return res.status(200).json({
       success: true,
       message: 'Attendance verified and marked successfully!',
       attendance: attendanceDoc,
+      data: {
+        user: cleanRegNo,
+        userName: cleanName,
+        event: session.title || targetSessionId,
+        sessionId: targetSessionId,
+        sessionTitle: session.title || targetSessionId,
+        labIdentifier: session.labIdentifier || '',
+        distanceMeters,
+        allowedRadiusMeters: adaptiveAllowedRadius,
+        tokenAgeSeconds,
+        timestamp: attendanceDoc.timestamp,
+      },
     });
   } catch (err) {
     console.error('[Attendance Verification Error]:', err);
@@ -241,7 +261,7 @@ exports.verifyAttendance = async (req, res) => {
 };
 
 /**
- * Admin: Create New ProxyQr Session (Auto-Generated Session ID)
+ * Admin: Create New ProxyQr Session (Auto-Generated Session ID with Deduplication)
  */
 exports.createSession = async (req, res) => {
   try {
@@ -251,13 +271,52 @@ exports.createSession = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Lab Identifier and Session Title are required.' });
     }
 
-    const sessionId = await generateUniqueSessionId(labIdentifier);
+    const cleanLab = labIdentifier.trim();
+    const cleanTitle = title.trim();
     const facultyName = (presenterName || proctorName || 'Faculty In-Charge').trim();
+
+    // 1. Anti-Duplicate Check: If an unstarted session with the same lab & title was created within 15s, return it
+    if (getIsConnected()) {
+      const fifteenSecondsAgo = new Date(Date.now() - 15000);
+      const recentDup = await Event.findOne({
+        labIdentifier: cleanLab,
+        title: cleanTitle,
+        status: 'PAUSED',
+        createdAt: { $gte: fifteenSecondsAgo },
+      }).sort({ createdAt: -1 });
+
+      if (recentDup) {
+        return res.status(200).json({
+          success: true,
+          message: `Session ${recentDup.sessionId} already initialized.`,
+          event: recentDup,
+          session: recentDup,
+          sessionId: recentDup.sessionId,
+        });
+      }
+
+      // Auto-cleanup any unstarted duplicate PAUSED sessions with 0 attendees for this same lab & title
+      const staleDuplicates = await Event.find({
+        labIdentifier: cleanLab,
+        title: cleanTitle,
+        status: 'PAUSED',
+      });
+
+      for (const stale of staleDuplicates) {
+        const attendeeCount = await Attendance.countDocuments({ sessionId: stale.sessionId });
+        if (attendeeCount === 0) {
+          await Event.deleteOne({ _id: stale._id });
+          activeSessions.delete(stale.sessionId);
+        }
+      }
+    }
+
+    const sessionId = await generateUniqueSessionId(cleanLab);
 
     let eventData = {
       sessionId,
-      labIdentifier: labIdentifier.trim(),
-      title: title.trim(),
+      labIdentifier: cleanLab,
+      title: cleanTitle,
       proctorName: facultyName,
       status: 'PAUSED',
       allowedRadiusMeters: 50,
@@ -304,6 +363,32 @@ exports.createSession = async (req, res) => {
   } catch (err) {
     console.error('[createSession Error]:', err);
     return res.status(500).json({ success: false, message: err.message || 'Failed to create session.' });
+  }
+};
+
+/**
+ * Admin: Delete Session and Associated Attendance Records
+ */
+exports.deleteSession = async (req, res) => {
+  try {
+    const sessionId = (req.params.sessionId || req.params.id || req.body.sessionId || '').trim().toUpperCase();
+    if (!sessionId) {
+      return res.status(400).json({ success: false, message: 'Session ID is required.' });
+    }
+
+    if (getIsConnected()) {
+      await Event.deleteOne({ sessionId });
+      await Attendance.deleteMany({ sessionId });
+    }
+    activeSessions.delete(sessionId);
+
+    return res.json({
+      success: true,
+      message: `Session ${sessionId} and associated attendance records deleted successfully.`,
+      sessionId,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
