@@ -417,9 +417,13 @@ export default function AdminDashboard() {
         },
         body: JSON.stringify({ sessionId: selectedSessionId }),
       });
+      if (socket) {
+        socket.emit('pause-session', { sessionId: selectedSessionId });
+      }
       setIsTerminateModalOpen(false);
-      fetchSessions();
-      setActiveTab('history');
+      setSelectedSessionId(null);
+      setActiveTab('active');
+      await fetchSessions();
     } catch (e) {
       alert('Error ending session: ' + e.message);
     }
@@ -526,6 +530,8 @@ export default function AdminDashboard() {
   };
 
   const isSessionActive = qrData?.status === 'ACTIVE';
+  const activeSessionObj = sessionsList.find((s) => s.sessionId === selectedSessionId) || qrData;
+  const isSessionTerminated = activeSessionObj?.status === 'TERMINATED' || qrData?.status === 'TERMINATED';
 
   const getDynamicQrCodeValue = () => {
     if (!isSessionActive) return 'SESSION_PAUSED';
@@ -671,44 +677,65 @@ export default function AdminDashboard() {
                 <div className="flex items-center gap-2 text-xs font-mono text-cyan-400">
                   <span className="font-bold text-white uppercase">{selectedSessionId}</span>
                   <span>•</span>
-                  <span>{qrData?.labIdentifier || 'Lab Room'}</span>
+                  <span>{activeSessionObj?.labIdentifier || qrData?.labIdentifier || 'Lab Room'}</span>
                   <span>•</span>
-                  <span>{qrData?.proctorName || 'Faculty In-Charge'}</span>
+                  <span>{activeSessionObj?.proctorName || qrData?.proctorName || 'Faculty In-Charge'}</span>
                 </div>
-                <h2 className="font-display font-extrabold text-xl sm:text-2xl text-white">
-                  {qrData?.title || 'Attendance Session'}
-                </h2>
+                <div className="flex flex-wrap items-center gap-3">
+                  <h2 className="font-display font-extrabold text-xl sm:text-2xl text-white">
+                    {activeSessionObj?.title || qrData?.title || 'Attendance Session'}
+                  </h2>
+                  {isSessionTerminated && (
+                    <span className="px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-mono font-bold">
+                      TERMINATED (READ-ONLY)
+                    </span>
+                  )}
+                </div>
+                {activeSessionObj?.createdAt && (
+                  <div className="text-[11px] font-mono text-slate-400">
+                    Session Held: {new Date(activeSessionObj.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                  </div>
+                )}
               </div>
 
-            {/* Session Lifecycle Buttons */}
-            <div className="flex items-center gap-3">
-              {!isSessionActive ? (
-                <button
-                  onClick={handleStartSession}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-display font-extrabold text-xs shadow-[0_0_25px_rgba(16,185,129,0.4)] transition-all cursor-pointer active:scale-95"
-                >
-                  <Play className="w-4 h-4 fill-slate-950" />
-                  <span>Start Session</span>
-                </button>
-              ) : (
-                <button
-                  onClick={handlePauseSession}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-extrabold text-xs shadow-[0_0_25px_rgba(245,158,11,0.4)] transition-all cursor-pointer active:scale-95"
-                >
-                  <Pause className="w-4 h-4 fill-slate-950" />
-                  <span>Pause Session</span>
-                </button>
-              )}
+              {/* Session Lifecycle Buttons */}
+              <div className="flex items-center gap-3">
+                {isSessionTerminated ? (
+                  <div className="px-4 py-2.5 rounded-2xl bg-slate-900 border border-slate-800 text-rose-300 font-mono text-xs font-bold flex items-center gap-2 shadow-sm">
+                    <X className="w-4 h-4 text-rose-400" />
+                    <span>Session Ended (Archived)</span>
+                  </div>
+                ) : (
+                  <>
+                    {!isSessionActive ? (
+                      <button
+                        onClick={handleStartSession}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-display font-extrabold text-xs shadow-[0_0_25px_rgba(16,185,129,0.4)] transition-all cursor-pointer active:scale-95"
+                      >
+                        <Play className="w-4 h-4 fill-slate-950" />
+                        <span>Start Session</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handlePauseSession}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-display font-extrabold text-xs shadow-[0_0_25px_rgba(245,158,11,0.4)] transition-all cursor-pointer active:scale-95"
+                      >
+                        <Pause className="w-4 h-4 fill-slate-950" />
+                        <span>Pause Session</span>
+                      </button>
+                    )}
 
-              <button
-                onClick={() => setIsTerminateModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 font-mono text-xs font-bold transition-all cursor-pointer"
-              >
-                <X className="w-4 h-4 text-rose-400" />
-                <span>End Session</span>
-              </button>
+                    <button
+                      onClick={() => setIsTerminateModalOpen(true)}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 font-mono text-xs font-bold transition-all cursor-pointer"
+                    >
+                      <X className="w-4 h-4 text-rose-400" />
+                      <span>End Session</span>
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
 
           {/* Main Grid: QR Viewport + Live Stats & Controls */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

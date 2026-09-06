@@ -315,6 +315,18 @@ exports.startSession = async (req, res) => {
     }
     const targetId = String(sessionId).trim().toUpperCase();
 
+    const memSession = activeSessions.get(targetId);
+    if (memSession && memSession.status === 'TERMINATED') {
+      return res.status(400).json({ success: false, message: 'This session has been permanently terminated and cannot be restarted.' });
+    }
+
+    if (getIsConnected()) {
+      const dbEvent = await Event.findOne({ sessionId: targetId });
+      if (dbEvent && dbEvent.status === 'TERMINATED') {
+        return res.status(400).json({ success: false, message: 'This session has been permanently terminated and cannot be restarted.' });
+      }
+    }
+
     startSession(req.io, targetId);
 
     return res.json({ success: true, message: `Session ${targetId} started/resumed.` });
@@ -516,16 +528,16 @@ exports.getSessionHistory = async (req, res) => {
 
 
 /**
- * Public / Admin: Get Events List
+ * Public / Admin: Get Events List (Returns Active, Paused, and Terminated for History)
  */
 exports.getEvents = async (req, res) => {
   try {
     let dbEvents = [];
     if (getIsConnected()) {
-      dbEvents = await Event.find({ status: { $ne: 'TERMINATED' } }).sort({ createdAt: -1 });
+      dbEvents = await Event.find().sort({ createdAt: -1 });
     }
 
-    const memoryEvents = Array.from(activeSessions.values()).filter((s) => s.status !== 'TERMINATED');
+    const memoryEvents = Array.from(activeSessions.values());
 
     const eventMap = new Map();
     memoryEvents.forEach((s) => eventMap.set(s.sessionId, s));
@@ -536,10 +548,12 @@ exports.getEvents = async (req, res) => {
       }
     });
 
-    const events = Array.from(eventMap.values());
+    const events = Array.from(eventMap.values()).sort(
+      (a, b) => new Date(b.createdAt || Date.now()) - new Date(a.createdAt || Date.now())
+    );
     return res.json({ success: true, events });
   } catch (err) {
-    const memoryEvents = Array.from(activeSessions.values()).filter((s) => s.status !== 'TERMINATED');
+    const memoryEvents = Array.from(activeSessions.values());
     return res.json({
       success: true,
       events: memoryEvents,
