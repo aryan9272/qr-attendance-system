@@ -626,7 +626,7 @@ export default function AdminDashboard() {
   return (
     <div className="space-y-6 pt-4 pb-12 select-none">
       {/* Top 3-Tab Glassmorphism Navigation Bar */}
-      <div className="glass-panel p-2 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 border border-slate-800">
+      <div className="glass-panel p-2 rounded-2xl flex flex-col sm:flex-row items-center justify-start gap-3 border border-slate-800">
         <div className="flex p-1 rounded-xl bg-slate-950/80 border border-slate-800 text-xs font-mono w-full sm:w-auto">
           <button
             onClick={() => setActiveTab('active')}
@@ -662,17 +662,6 @@ export default function AdminDashboard() {
           >
             <History className="w-4 h-4" />
             <span>[ Session History ]</span>
-          </button>
-        </div>
-
-        {/* Action Controls */}
-        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-          <button
-            onClick={() => handleExportExcel(selectedSessionId)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold transition-all cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.15)]"
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            <span>Download Excel</span>
           </button>
         </div>
       </div>
