@@ -362,7 +362,7 @@ exports.pauseSession = async (req, res) => {
  */
 exports.terminateSession = async (req, res) => {
   try {
-    const { sessionId } = req.body;
+    const sessionId = req.body.sessionId || req.body.eventId || req.params.id;
     if (!sessionId) {
       return res.status(400).json({ success: false, message: 'Session ID is required.' });
     }
@@ -370,7 +370,19 @@ exports.terminateSession = async (req, res) => {
     const endedAt = new Date();
 
     if (getIsConnected()) {
-      await Event.updateOne({ sessionId: targetId }, { status: 'TERMINATED', endedAt, terminatedAt: endedAt }).catch(() => {});
+      // Explicitly update document in MongoDB to: { status: "TERMINATED", isEnded: true, endedAt: new Date() }
+      // Do NOT set or leave status as "PAUSED".
+      await Event.updateOne(
+        { sessionId: targetId },
+        {
+          $set: {
+            status: 'TERMINATED',
+            isEnded: true,
+            endedAt: endedAt,
+            terminatedAt: endedAt,
+          },
+        }
+      ).catch((err) => console.warn('Mongo terminate update warning:', err));
     }
 
     terminateSession(req.io, targetId);
@@ -379,7 +391,9 @@ exports.terminateSession = async (req, res) => {
       success: true,
       message: `Session ${targetId} permanently closed.`,
       status: 'TERMINATED',
+      isEnded: true,
       endedAt,
+      session: null,
     });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
@@ -541,6 +555,49 @@ exports.getSessionHistory = async (req, res) => {
 
 
 /**
+ * Public / Admin: Get Current Active Session
+ * Strictly filters by active/paused non-ended status.
+ * If no session matches or latest is TERMINATED / isEnded, returns { session: null }.
+ */
+exports.getActiveSession = async (req, res) => {
+  try {
+    let session = null;
+
+    if (getIsConnected()) {
+      const dbSession = await Event.findOne({
+        status: { $in: ['ACTIVE', 'PAUSED'] },
+        isEnded: { $ne: true },
+      }).sort({ createdAt: -1 });
+
+      if (dbSession && dbSession.status !== 'TERMINATED' && !dbSession.isEnded) {
+        session = dbSession.toObject ? dbSession.toObject() : dbSession;
+      }
+    }
+
+    // In-memory fallback if DB not connected or no DB session
+    if (!session) {
+      const memSessions = Array.from(activeSessions.values()).filter(
+        (s) => (s.status === 'ACTIVE' || s.status === 'PAUSED') && !s.isEnded && s.status !== 'TERMINATED'
+      );
+      if (memSessions.length > 0) {
+        memSessions.sort(
+          (a, b) => new Date(b.createdAt || Date.now()) - new Date(a.createdAt || Date.now())
+        );
+        session = memSessions[0];
+      }
+    }
+
+    if (!session || session.status === 'TERMINATED' || session.isEnded) {
+      return res.json({ success: true, session: null });
+    }
+
+    return res.json({ success: true, session });
+  } catch (err) {
+    return res.status(500).json({ success: false, session: null, message: err.message });
+  }
+};
+
+/**
  * Public / Admin: Get Events List (Returns Active, Paused, and Terminated for History)
  */
 exports.getEvents = async (req, res) => {
@@ -553,11 +610,25 @@ exports.getEvents = async (req, res) => {
     const memoryEvents = Array.from(activeSessions.values());
 
     const eventMap = new Map();
-    memoryEvents.forEach((s) => eventMap.set(s.sessionId, s));
+    // 1. Put DB events into map first
     dbEvents.forEach((e) => {
       const obj = e.toObject ? e.toObject() : e;
-      if (!eventMap.has(obj.sessionId)) {
-        eventMap.set(obj.sessionId, obj);
+      eventMap.set(obj.sessionId, obj);
+    });
+
+    // 2. Merge memory events, ensuring TERMINATED/isEnded in DB is never overwritten with PAUSED
+    memoryEvents.forEach((s) => {
+      if (!eventMap.has(s.sessionId)) {
+        eventMap.set(s.sessionId, s);
+      } else {
+        const dbObj = eventMap.get(s.sessionId);
+        if (dbObj.status === 'TERMINATED' || dbObj.isEnded) {
+          s.status = 'TERMINATED';
+          s.isEnded = true;
+          eventMap.set(s.sessionId, { ...s, ...dbObj, status: 'TERMINATED', isEnded: true });
+        } else {
+          eventMap.set(s.sessionId, { ...dbObj, ...s });
+        }
       }
     });
 

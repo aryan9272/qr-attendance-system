@@ -177,6 +177,16 @@ function initSocketService(io) {
       pauseSession(io, targetId);
     });
 
+    socket.on('terminate-session', ({ sessionId, eventId }) => {
+      const targetId = String(sessionId || eventId || '').trim().toUpperCase();
+      if (targetId) terminateSession(io, targetId);
+    });
+
+    socket.on('end-session', ({ sessionId, eventId }) => {
+      const targetId = String(sessionId || eventId || '').trim().toUpperCase();
+      if (targetId) terminateSession(io, targetId);
+    });
+
     socket.on('force-rotate-qr', ({ sessionId }) => {
       if (!sessionId) return;
       const targetId = String(sessionId).trim().toUpperCase();
@@ -192,15 +202,23 @@ function initSocketService(io) {
 function startSession(io, sessionId) {
   let session = activeSessions.get(sessionId);
   if (!session) return;
+  if (session.status === 'TERMINATED' || session.isEnded) {
+    console.log(`[Socket.IO] Ignoring start request for terminated session: ${sessionId}`);
+    return;
+  }
 
   session.status = 'ACTIVE';
   console.log(`[Socket.IO] SESSION STARTED for ${sessionId}`);
 
-  Event.updateOne({ sessionId }, { status: 'ACTIVE' }).catch(() => {});
+  Event.updateOne(
+    { sessionId, status: { $ne: 'TERMINATED' }, isEnded: { $ne: true } },
+    { status: 'ACTIVE' }
+  ).catch(() => {});
 
   io.to(`session:${sessionId}`).emit('session_status_changed', {
     sessionId,
     status: 'ACTIVE',
+    isEnded: false,
   });
 
   rotateToken(io, sessionId);
@@ -209,15 +227,23 @@ function startSession(io, sessionId) {
 function pauseSession(io, sessionId) {
   let session = activeSessions.get(sessionId);
   if (!session) return;
+  if (session.status === 'TERMINATED' || session.isEnded) {
+    console.log(`[Socket.IO] Ignoring pause request for terminated session: ${sessionId}`);
+    return;
+  }
 
   session.status = 'PAUSED';
   console.log(`[Socket.IO] SESSION PAUSED for ${sessionId}`);
 
-  Event.updateOne({ sessionId }, { status: 'PAUSED' }).catch(() => {});
+  Event.updateOne(
+    { sessionId, status: { $ne: 'TERMINATED' }, isEnded: { $ne: true } },
+    { status: 'PAUSED' }
+  ).catch(() => {});
 
   io.to(`session:${sessionId}`).emit('session_status_changed', {
     sessionId,
     status: 'PAUSED',
+    isEnded: false,
   });
 
   io.to(`session:${sessionId}`).emit('qr-update', {
@@ -227,6 +253,7 @@ function pauseSession(io, sessionId) {
     qrUrl: null,
     remainingSeconds: 0,
     status: 'PAUSED',
+    isEnded: false,
     customFields: session.customFields,
   });
 }
@@ -236,6 +263,7 @@ function terminateSession(io, sessionId) {
   const endedAt = new Date();
   if (session) {
     session.status = 'TERMINATED';
+    session.isEnded = true;
     session.endedAt = endedAt;
     session.terminatedAt = endedAt;
     session.currentToken = null;
@@ -244,18 +272,23 @@ function terminateSession(io, sessionId) {
   }
 
   if (getIsConnected()) {
-    Event.updateOne({ sessionId }, { status: 'TERMINATED', endedAt, terminatedAt: endedAt }).catch(() => {});
+    Event.updateOne(
+      { sessionId },
+      { $set: { status: 'TERMINATED', isEnded: true, endedAt, terminatedAt: endedAt } }
+    ).catch(() => {});
   }
 
   io.to(`session:${sessionId}`).emit('session_status_changed', {
     sessionId,
     status: 'TERMINATED',
+    isEnded: true,
     endedAt,
   });
 
   io.to(`session:${sessionId}`).emit('session_ended', {
     sessionId,
     status: 'TERMINATED',
+    isEnded: true,
     endedAt,
     message: 'Session permanently closed.',
   });
@@ -267,6 +300,7 @@ function terminateSession(io, sessionId) {
     qrUrl: null,
     remainingSeconds: 0,
     status: 'TERMINATED',
+    isEnded: true,
     endedAt,
   });
 }

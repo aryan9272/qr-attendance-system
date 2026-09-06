@@ -76,6 +76,7 @@ export default function AdminDashboard() {
     currentSessionId,
     backendUrl,
     joinSession,
+    clearSession,
     forceRotateQR,
     updateGeofenceRadius,
   } = useSocket();
@@ -86,6 +87,7 @@ export default function AdminDashboard() {
   // Sessions & Attendees Roster State
   const [sessionsList, setSessionsList] = useState([]);
   const [selectedSessionId, setSelectedSessionId] = useState(currentSessionId || null);
+  const setActiveSession = (sid) => setSelectedSessionId(sid);
   const [attendeesRoster, setAttendeesRoster] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
 
@@ -131,8 +133,27 @@ export default function AdminDashboard() {
   const [editPhone, setEditPhone] = useState('');
   const [editReason, setEditReason] = useState('');
 
+  // Fetch active session from strictly filtered endpoint
+  const fetchActiveSession = async () => {
+    try {
+      const token = localStorage.getItem('admin_token');
+      const { res, data } = await fetchWithFailover('/api/session/active', {
+        headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
+      });
+      if (data?.success && data.session && data.session.status !== 'TERMINATED' && !data.session.isEnded) {
+        setSelectedSessionId(data.session.sessionId);
+        joinSession(data.session.sessionId);
+      } else {
+        setSelectedSessionId(null);
+        clearSession();
+      }
+    } catch (e) {
+      console.warn('[AdminDashboard] Fetch active session error:', e);
+    }
+  };
+
   // Fetch Sessions and Roster Stats
-  const fetchSessions = async () => {
+  const fetchSessions = async (options = {}) => {
     try {
       const token = localStorage.getItem('admin_token');
       const { res, data } = await fetchWithFailover('/api/attendance/events', {
@@ -140,20 +161,20 @@ export default function AdminDashboard() {
       });
       if (data?.success && Array.isArray(data.events)) {
         setSessionsList(data.events);
-        if (data.events.length > 0) {
-          setSelectedSessionId((prev) => {
-            if (prev) {
-              const prevEv = data.events.find((e) => e.sessionId === prev);
-              if (prevEv && prevEv.status !== 'TERMINATED') {
-                return prev;
-              }
-            }
-            const activeEv = data.events.find((e) => e.status === 'ACTIVE' || e.status === 'PAUSED');
-            return activeEv ? activeEv.sessionId : null;
-          });
-        } else {
+
+        if (options.preventAutoSelect) {
           setSelectedSessionId(null);
+          return;
         }
+
+        setSelectedSessionId((prev) => {
+          if (!prev) return null;
+          const prevEv = data.events.find((e) => e.sessionId === prev);
+          if (prevEv && prevEv.status !== 'TERMINATED' && !prevEv.isEnded) {
+            return prev;
+          }
+          return null;
+        });
       }
     } catch (e) {
       console.warn('[AdminDashboard] Fetch sessions error:', e);
@@ -182,7 +203,11 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
+    fetchActiveSession();
     fetchSessions();
+  }, [backendUrl]);
+
+  useEffect(() => {
     fetchRoster(selectedSessionId);
   }, [selectedSessionId, backendUrl]);
 
@@ -411,8 +436,10 @@ export default function AdminDashboard() {
 
   // Terminate Session (Double Check Permanently End)
   const handleTerminateSessionSubmit = async () => {
+    const sessionToTerminate = selectedSessionId;
     try {
       const token = localStorage.getItem('admin_token');
+      // 1. Await the API call to terminate the session
       await fetchWithFailover('/api/admin/sessions/terminate', {
         method: 'POST',
         headers: {
@@ -420,16 +447,32 @@ export default function AdminDashboard() {
           Authorization: `Bearer ${token}`,
           'x-admin-token': token,
         },
-        body: JSON.stringify({ sessionId: selectedSessionId }),
+        body: JSON.stringify({ sessionId: sessionToTerminate }),
       });
-      if (socket) {
-        socket.emit('pause-session', { sessionId: selectedSessionId });
+
+      // Notify socket of termination (NEVER emit pause-session!)
+      if (socket && sessionToTerminate) {
+        socket.emit('terminate-session', { sessionId: sessionToTerminate });
       }
-      setIsTerminateModalOpen(false);
+
+      // 2. Clear active session state
+      setActiveSession(null);
+      clearSession();
+
+      // 3. Remove any cached session ID from localStorage/sessionStorage
       localStorage.removeItem('proxyqr_active_session');
-      setSelectedSessionId(null);
+      localStorage.removeItem('selected_session_id');
+      localStorage.removeItem('active_session_id');
+      sessionStorage.removeItem('proxyqr_active_session');
+      sessionStorage.removeItem('selected_session_id');
+      sessionStorage.removeItem('active_session_id');
+
+      // 4. Force view to remain on the "No Active Session Running" screen
+      setIsTerminateModalOpen(false);
       setActiveTab('active');
-      await fetchSessions();
+
+      // Update sessions history list without re-selecting any terminated session
+      await fetchSessions({ preventAutoSelect: true });
     } catch (e) {
       alert('Error ending session: ' + e.message);
     }
@@ -1111,14 +1154,14 @@ export default function AdminDashboard() {
                       <td className="p-4">
                         <span
                           className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                            sess.status === 'TERMINATED'
-                              ? 'bg-slate-800 text-slate-400 border-slate-700'
+                            sess.status === 'TERMINATED' || sess.isEnded || sess.endedAt
+                              ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
                               : sess.status === 'ACTIVE'
                               ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
                               : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
                           }`}
                         >
-                          {sess.status}
+                          {sess.status === 'TERMINATED' || sess.isEnded || sess.endedAt ? 'TERMINATED' : sess.status}
                         </span>
                       </td>
                       <td className="p-4 text-slate-400">

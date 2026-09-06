@@ -93,7 +93,13 @@ export const SocketProvider = ({ children }) => {
 
     newSocket.on('session_ended', (data) => {
       console.log('[Socket.IO Frontend] Received session_ended event:', data.sessionId);
-      setQrData((prev) => (prev ? { ...prev, status: 'TERMINATED', token: null, qrUrl: null, endedAt: data.endedAt } : null));
+      if (currentSessionIdRef.current === data.sessionId) {
+        setQrData(null);
+        setCurrentSessionId(null);
+        currentSessionIdRef.current = null;
+      } else {
+        setQrData((prev) => (prev ? { ...prev, status: 'TERMINATED', isEnded: true, token: null, qrUrl: null, endedAt: data.endedAt } : null));
+      }
     });
 
     newSocket.on('force_admin_logout', () => {
@@ -114,8 +120,18 @@ export const SocketProvider = ({ children }) => {
     };
   }, [backendUrl]);
 
+  const clearSession = () => {
+    setCurrentSessionId(null);
+    currentSessionIdRef.current = null;
+    setQrData(null);
+    setCountdown(60);
+  };
+
   const joinSession = (sessionId) => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      clearSession();
+      return;
+    }
     const cleanId = String(sessionId).trim().toUpperCase();
     setCurrentSessionId(cleanId);
     currentSessionIdRef.current = cleanId;
@@ -148,6 +164,7 @@ export const SocketProvider = ({ children }) => {
         currentSessionId,
         backendUrl,
         joinSession,
+        clearSession,
         joinEvent: joinSession, // Backward compatibility alias
         forceRotateQR,
         updateGeofenceRadius,

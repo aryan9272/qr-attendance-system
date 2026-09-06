@@ -19,10 +19,19 @@ router.post('/auth/logout-all', verifyAdminToken, adminController.logoutAll);
 router.post('/auth/logout', adminController.logout);
 
 // Protected Session Lifecycle Routes (/api/admin/sessions/*)
+router.get('/sessions/active', attendanceController.getActiveSession);
+router.get('/session/active', attendanceController.getActiveSession);
+router.get('/sessions/current', attendanceController.getActiveSession);
+router.get('/session/current', attendanceController.getActiveSession);
 router.post('/sessions/create', verifyAdminToken, attendanceController.createSession);
 router.post('/sessions/start', verifyAdminToken, attendanceController.startSession);
 router.post('/sessions/pause', verifyAdminToken, attendanceController.pauseSession);
 router.post('/sessions/terminate', verifyAdminToken, attendanceController.terminateSession);
+router.post('/sessions/end', verifyAdminToken, attendanceController.terminateSession);
+router.post('/sessions/:id/end', verifyAdminToken, attendanceController.terminateSession);
+router.post('/sessions/:id/terminate', verifyAdminToken, attendanceController.terminateSession);
+router.patch('/sessions/:id/end', verifyAdminToken, attendanceController.terminateSession);
+router.patch('/sessions/:id/terminate', verifyAdminToken, attendanceController.terminateSession);
 router.get('/sessions/history', verifyAdminToken, attendanceController.getSessionHistory);
 
 // Protected Roster Management & Overrides (/api/admin/*)

@@ -59,6 +59,8 @@ app.use((req, res, next) => {
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/faculty', adminRoutes); // Alias for backward compatibility
+app.use('/api/session', attendanceRoutes); // Direct session endpoints
+app.use('/api/sessions', attendanceRoutes); // Direct plural sessions endpoints
 
 // Health Check Route
 app.get('/api/health', (req, res) => {
