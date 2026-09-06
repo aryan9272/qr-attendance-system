@@ -632,9 +632,30 @@ exports.getEvents = async (req, res) => {
       }
     });
 
-    const events = Array.from(eventMap.values()).sort(
-      (a, b) => new Date(b.createdAt || Date.now()) - new Date(a.createdAt || Date.now())
-    );
+    const getTs = (item) => {
+      if (item.createdAt) {
+        const t = new Date(item.createdAt).getTime();
+        if (!isNaN(t) && t > 0) return t;
+      }
+      if (item._id) {
+        try {
+          const hex = String(item._id).substring(0, 8);
+          const t = parseInt(hex, 16) * 1000;
+          if (!isNaN(t) && t > 0) return t;
+        } catch (e) {}
+      }
+      return 0;
+    };
+
+    const events = Array.from(eventMap.values())
+      .map((item) => {
+        const ts = getTs(item);
+        return {
+          ...item,
+          createdAt: item.createdAt || (ts > 0 ? new Date(ts).toISOString() : new Date().toISOString()),
+        };
+      })
+      .sort((a, b) => getTs(b) - getTs(a));
     return res.json({ success: true, events });
   } catch (err) {
     const memoryEvents = Array.from(activeSessions.values());

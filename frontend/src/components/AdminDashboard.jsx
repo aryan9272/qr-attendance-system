@@ -103,6 +103,10 @@ export default function AdminDashboard() {
   const [yearFilter, setYearFilter] = useState('ALL');
   const [verificationFilter, setVerificationFilter] = useState('ALL');
 
+  // Session History Search & Status Filter
+  const [historySearchQuery, setHistorySearchQuery] = useState('');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState('ALL');
+
   // Modals Control
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isTerminateModalOpen, setIsTerminateModalOpen] = useState(false);
@@ -623,6 +627,59 @@ export default function AdminDashboard() {
     return matchesQuery && matchesDept && matchesYear && matchesVer;
   });
 
+  // Session Timestamp helper (extracts createdAt or MongoDB ObjectId timestamp)
+  const getSessionTimestamp = (sess) => {
+    if (!sess) return 0;
+    if (sess.createdAt) {
+      const t = new Date(sess.createdAt).getTime();
+      if (!isNaN(t) && t > 0) return t;
+    }
+    if (sess._id) {
+      try {
+        const hex = String(sess._id).substring(0, 8);
+        const t = parseInt(hex, 16) * 1000;
+        if (!isNaN(t) && t > 0) return t;
+      } catch (e) {}
+    }
+    return 0;
+  };
+
+  const getFormattedDateStarted = (sess) => {
+    const ts = getSessionTimestamp(sess);
+    if (ts && ts > 0) {
+      return new Date(ts).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+    }
+    return 'N/A';
+  };
+
+  // Filter and Sort Historical Sessions: latest created at the very top
+  const sortedAndFilteredHistory = sessionsList
+    .map((sess) => ({
+      ...sess,
+      _timestamp: getSessionTimestamp(sess),
+      _isTerminated: sess.status === 'TERMINATED' || sess.isEnded || !!sess.endedAt,
+    }))
+    .sort((a, b) => b._timestamp - a._timestamp)
+    .filter((sess) => {
+      // Filter by Status: 'ALL' | 'ACTIVE' | 'PAUSED' | 'TERMINATED'
+      if (historyStatusFilter !== 'ALL') {
+        const effectiveStatus = sess._isTerminated ? 'TERMINATED' : (sess.status || 'PAUSED');
+        if (effectiveStatus !== historyStatusFilter) {
+          return false;
+        }
+      }
+
+      // Search by Session ID, Name / Title, Lab / Room, Faculty / Instructor
+      if (!historySearchQuery.trim()) return true;
+      const q = historySearchQuery.toLowerCase().trim();
+      const matchId = sess.sessionId?.toLowerCase().includes(q);
+      const matchTitle = sess.title?.toLowerCase().includes(q);
+      const matchLab = sess.labIdentifier?.toLowerCase().includes(q);
+      const matchProctor = (sess.proctorName || sess.presenterName || '').toLowerCase().includes(q);
+
+      return matchId || matchTitle || matchLab || matchProctor;
+    });
+
   return (
     <div className="space-y-6 pt-4 pb-12 select-none">
       {/* Top 3-Tab Glassmorphism Navigation Bar */}
@@ -1103,11 +1160,64 @@ export default function AdminDashboard() {
       {/* TAB 3: SESSION HISTORY */}
       {activeTab === 'history' && (
         <div className="space-y-6 animate-fadeIn">
-          <div className="glass-panel p-6 rounded-3xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <div className="flex items-center gap-2 font-display font-bold text-lg text-white">
-                <History className="w-5 h-5 text-cyan-400" />
-                <span>Historical ProxyQr Sessions Archive</span>
+          <div className="glass-panel p-6 rounded-3xl space-y-5">
+            {/* Header with Title & Stats Count */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-lg text-white">Session History</h3>
+                  <p className="text-slate-400 text-xs font-mono">
+                    Complete chronological log of all lecture & lab attendance sessions
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300">
+                  Showing <strong className="text-cyan-400">{sortedAndFilteredHistory.length}</strong> of {sessionsList.length} sessions
+                </span>
+              </div>
+            </div>
+
+            {/* Search & Status Filter Controls */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 font-mono text-xs">
+              {/* Search Input */}
+              <div className="relative w-full sm:w-80">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                <input
+                  type="text"
+                  value={historySearchQuery}
+                  onChange={(e) => setHistorySearchQuery(e.target.value)}
+                  placeholder="Search Session ID, Title, Room..."
+                  className="w-full pl-10 pr-8 py-2.5 rounded-xl glass-input text-xs font-mono text-slate-200"
+                />
+                {historySearchQuery && (
+                  <button
+                    onClick={() => setHistorySearchQuery('')}
+                    className="absolute right-2.5 top-2.5 p-0.5 rounded text-slate-400 hover:text-white"
+                    title="Clear search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Status Filter */}
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <span className="text-slate-400 text-xs hidden sm:inline">Status Filter:</span>
+                <select
+                  value={historyStatusFilter}
+                  onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                  className="w-full sm:w-auto px-3.5 py-2.5 rounded-xl glass-input text-xs font-mono text-slate-200 bg-slate-900 border border-slate-700 cursor-pointer"
+                >
+                  <option value="ALL">All Statuses ({sessionsList.length})</option>
+                  <option value="ACTIVE">Active Sessions</option>
+                  <option value="PAUSED">Paused Sessions</option>
+                  <option value="TERMINATED">Terminated Sessions</option>
+                </select>
               </div>
             </div>
 
@@ -1127,64 +1237,72 @@ export default function AdminDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {sessionsList.map((sess) => (
-                    <tr
-                      key={sess.sessionId}
-                      onClick={() => handleViewHistoricalSession(sess.sessionId)}
-                      className="hover:bg-slate-900/60 transition-colors cursor-pointer group"
-                    >
-                      <td className="p-4 font-bold text-cyan-300 font-mono group-hover:text-cyan-200">
-                        {sess.sessionId}
-                      </td>
-                      <td className="p-4 text-slate-200 font-mono">{sess.labIdentifier}</td>
-                      <td className="p-4 font-bold text-white font-sans">{sess.title}</td>
-                      <td className="p-4 text-slate-300 font-sans">{sess.proctorName || sess.presenterName || 'Faculty In-Charge'}</td>
-                      <td className="p-4 font-bold text-emerald-400">{sess.totalAttendees || 0}</td>
-                      <td className="p-4">
-                        <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                            sess.status === 'TERMINATED' || sess.isEnded || sess.endedAt
-                              ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-                              : sess.status === 'ACTIVE'
-                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                              : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                          }`}
-                        >
-                          {sess.status === 'TERMINATED' || sess.isEnded || sess.endedAt ? 'TERMINATED' : sess.status}
-                        </span>
-                      </td>
-                      <td className="p-4 text-slate-400">
-                        {sess.createdAt ? new Date(sess.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : 'N/A'}
-                      </td>
-                      <td className="p-4 text-slate-400">
-                        {sess.endedAt || sess.terminatedAt
-                          ? new Date(sess.endedAt || sess.terminatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
-                          : sess.status === 'TERMINATED'
-                          ? 'Terminated'
-                          : 'Active / In Progress'}
-                      </td>
-                      <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => handleViewHistoricalSession(sess.sessionId)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-mono font-semibold transition-all cursor-pointer shadow-sm"
-                            title="View Session Attendance Dashboard"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>View Attendance</span>
-                          </button>
-                          <button
-                            onClick={() => handleExportExcel(sess.sessionId)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-semibold transition-all cursor-pointer shadow-sm"
-                            title="Download Formatted Excel Attendance Sheet"
-                          >
-                            <FileSpreadsheet className="w-3.5 h-3.5" />
-                            <span>Download Sheet</span>
-                          </button>
-                        </div>
+                  {sortedAndFilteredHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="p-8 text-center text-slate-500 font-mono">
+                        No sessions found matching the search or filter criteria.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    sortedAndFilteredHistory.map((sess) => (
+                      <tr
+                        key={sess.sessionId}
+                        onClick={() => handleViewHistoricalSession(sess.sessionId)}
+                        className="hover:bg-slate-900/60 transition-colors cursor-pointer group"
+                      >
+                        <td className="p-4 font-bold text-cyan-300 font-mono group-hover:text-cyan-200">
+                          {sess.sessionId}
+                        </td>
+                        <td className="p-4 text-slate-200 font-mono">{sess.labIdentifier}</td>
+                        <td className="p-4 font-bold text-white font-sans">{sess.title}</td>
+                        <td className="p-4 text-slate-300 font-sans">{sess.proctorName || sess.presenterName || 'Faculty In-Charge'}</td>
+                        <td className="p-4 font-bold text-emerald-400">{sess.totalAttendees || 0}</td>
+                        <td className="p-4">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                              sess._isTerminated
+                                ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                                : sess.status === 'ACTIVE'
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                            }`}
+                          >
+                            {sess._isTerminated ? 'TERMINATED' : sess.status}
+                          </span>
+                        </td>
+                        <td className="p-4 text-slate-400">
+                          {getFormattedDateStarted(sess)}
+                        </td>
+                        <td className="p-4 text-slate-400">
+                          {sess.endedAt || sess.terminatedAt
+                            ? new Date(sess.endedAt || sess.terminatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+                            : sess._isTerminated
+                            ? 'Terminated'
+                            : 'Active / In Progress'}
+                        </td>
+                        <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleViewHistoricalSession(sess.sessionId)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-mono font-semibold transition-all cursor-pointer shadow-sm"
+                              title="View Session Attendance Dashboard"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>View Attendance</span>
+                            </button>
+                            <button
+                              onClick={() => handleExportExcel(sess.sessionId)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-semibold transition-all cursor-pointer shadow-sm"
+                              title="Download Formatted Excel Attendance Sheet"
+                            >
+                              <FileSpreadsheet className="w-3.5 h-3.5" />
+                              <span>Download Sheet</span>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
