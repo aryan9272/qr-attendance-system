@@ -88,7 +88,12 @@ export const SocketProvider = ({ children }) => {
     });
 
     newSocket.on('session_status_changed', (data) => {
-      setQrData((prev) => (prev ? { ...prev, status: data.status } : prev));
+      setQrData((prev) => (prev ? { ...prev, status: data.status, endedAt: data.endedAt } : prev));
+    });
+
+    newSocket.on('session_ended', (data) => {
+      console.log('[Socket.IO Frontend] Received session_ended event:', data.sessionId);
+      setQrData((prev) => (prev ? { ...prev, status: 'TERMINATED', token: null, qrUrl: null, endedAt: data.endedAt } : null));
     });
 
     newSocket.on('force_admin_logout', () => {

@@ -38,6 +38,10 @@ const EventSchema = new mongoose.Schema(
       requireMobileNumber: { type: Boolean, default: false },
       requireWifiVerification: { type: Boolean, default: false },
     },
+    endedAt: {
+      type: Date,
+      default: null,
+    },
     terminatedAt: {
       type: Date,
       default: null,

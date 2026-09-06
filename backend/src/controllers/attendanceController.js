@@ -96,10 +96,13 @@ exports.verifyAttendance = async (req, res) => {
     }
 
     if (!session || session.status === 'PAUSED' || session.status === 'TERMINATED') {
-      return res.status(403).json({
+      const isTerminated = !session || session.status === 'TERMINATED';
+      return res.status(400).json({
         success: false,
-        errorType: 'SESSION_PAUSED',
-        error: 'Attendance session is currently paused or ended by the Admin.',
+        errorType: isTerminated ? 'SESSION_TERMINATED' : 'SESSION_PAUSED',
+        error: isTerminated
+          ? 'Session permanently closed. This attendance session has been ended by the Admin.'
+          : 'Attendance session is currently paused by the Admin.',
       });
     }
 
@@ -364,10 +367,20 @@ exports.terminateSession = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Session ID is required.' });
     }
     const targetId = String(sessionId).trim().toUpperCase();
+    const endedAt = new Date();
+
+    if (getIsConnected()) {
+      await Event.updateOne({ sessionId: targetId }, { status: 'TERMINATED', endedAt, terminatedAt: endedAt }).catch(() => {});
+    }
 
     terminateSession(req.io, targetId);
 
-    return res.json({ success: true, message: `Session ${targetId} permanently terminated.` });
+    return res.json({
+      success: true,
+      message: `Session ${targetId} permanently closed.`,
+      status: 'TERMINATED',
+      endedAt,
+    });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }

@@ -233,18 +233,31 @@ function pauseSession(io, sessionId) {
 
 function terminateSession(io, sessionId) {
   let session = activeSessions.get(sessionId);
+  const endedAt = new Date();
   if (session) {
     session.status = 'TERMINATED';
+    session.endedAt = endedAt;
+    session.terminatedAt = endedAt;
     session.currentToken = null;
     session.previousToken = null;
     session.qrUrl = null;
   }
 
-  Event.updateOne({ sessionId }, { status: 'TERMINATED', terminatedAt: new Date() }).catch(() => {});
+  if (getIsConnected()) {
+    Event.updateOne({ sessionId }, { status: 'TERMINATED', endedAt, terminatedAt: endedAt }).catch(() => {});
+  }
 
   io.to(`session:${sessionId}`).emit('session_status_changed', {
     sessionId,
     status: 'TERMINATED',
+    endedAt,
+  });
+
+  io.to(`session:${sessionId}`).emit('session_ended', {
+    sessionId,
+    status: 'TERMINATED',
+    endedAt,
+    message: 'Session permanently closed.',
   });
 
   io.to(`session:${sessionId}`).emit('qr-update', {
@@ -254,6 +267,7 @@ function terminateSession(io, sessionId) {
     qrUrl: null,
     remainingSeconds: 0,
     status: 'TERMINATED',
+    endedAt,
   });
 }
 

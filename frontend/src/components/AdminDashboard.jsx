@@ -142,12 +142,17 @@ export default function AdminDashboard() {
         setSessionsList(data.events);
         if (data.events.length > 0) {
           setSelectedSessionId((prev) => {
-            if (prev && data.events.some((e) => e.sessionId === prev)) {
-              return prev;
+            if (prev) {
+              const prevEv = data.events.find((e) => e.sessionId === prev);
+              if (prevEv && prevEv.status !== 'TERMINATED') {
+                return prev;
+              }
             }
-            const activeEv = data.events.find((e) => e.status === 'ACTIVE') || data.events[0];
-            return prev || (activeEv ? activeEv.sessionId : null);
+            const activeEv = data.events.find((e) => e.status === 'ACTIVE' || e.status === 'PAUSED');
+            return activeEv ? activeEv.sessionId : null;
           });
+        } else {
+          setSelectedSessionId(null);
         }
       }
     } catch (e) {
@@ -421,6 +426,7 @@ export default function AdminDashboard() {
         socket.emit('pause-session', { sessionId: selectedSessionId });
       }
       setIsTerminateModalOpen(false);
+      localStorage.removeItem('proxyqr_active_session');
       setSelectedSessionId(null);
       setActiveTab('active');
       await fetchSessions();
@@ -619,20 +625,6 @@ export default function AdminDashboard() {
         {/* Action Controls */}
         <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
           <button
-            onClick={() => {
-              setNewLabIdentifier('');
-              setNewTitle('');
-              setNewPresenterName('');
-              setRequireMobile(false);
-              setIsCreateModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-mono font-bold transition-all cursor-pointer shadow-[0_0_15px_rgba(6,182,212,0.15)]"
-          >
-            <Plus className="w-4 h-4" />
-            <span>New Session</span>
-          </button>
-
-          <button
             onClick={() => handleExportExcel(selectedSessionId)}
             className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono font-bold transition-all cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.15)]"
           >
@@ -644,7 +636,7 @@ export default function AdminDashboard() {
 
       {/* TAB 1: ACTIVE SESSION VIEWPORT */}
       {activeTab === 'active' && (
-        !selectedSessionId ? (
+        (!selectedSessionId || isSessionTerminated) ? (
           <div className="glass-panel p-8 sm:p-12 rounded-3xl text-center space-y-4 border border-cyan-500/30 my-6 animate-fadeIn">
             <div className="p-4 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 w-16 h-16 mx-auto flex items-center justify-center shadow-[0_0_25px_rgba(6,182,212,0.2)]">
               <Radio className="w-8 h-8 animate-pulse" />
@@ -652,7 +644,7 @@ export default function AdminDashboard() {
             <div className="space-y-2">
               <h3 className="text-xl sm:text-2xl font-bold font-display text-white">No Active Session Running</h3>
               <p className="text-slate-400 font-mono text-xs max-w-md mx-auto">
-                No attendance session is currently active. Please click "New Session" to initialize a lab or lecture session, then start QR rotation.
+                No attendance session is currently active. Please click "+ Create New Session" to initialize a lab or lecture session, then start QR rotation.
               </p>
             </div>
             <button
@@ -1097,7 +1089,8 @@ export default function AdminDashboard() {
                     <th className="p-4">Faculty / Instructor</th>
                     <th className="p-4">Total Attendees</th>
                     <th className="p-4">Status</th>
-                    <th className="p-4">Date Created</th>
+                    <th className="p-4">Date Started</th>
+                    <th className="p-4">Date Ended</th>
                     <th className="p-4 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -1129,7 +1122,14 @@ export default function AdminDashboard() {
                         </span>
                       </td>
                       <td className="p-4 text-slate-400">
-                        {new Date(sess.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                        {sess.createdAt ? new Date(sess.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : 'N/A'}
+                      </td>
+                      <td className="p-4 text-slate-400">
+                        {sess.endedAt || sess.terminatedAt
+                          ? new Date(sess.endedAt || sess.terminatedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+                          : sess.status === 'TERMINATED'
+                          ? 'Terminated'
+                          : 'Active / In Progress'}
                       </td>
                       <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-2">
@@ -1295,11 +1295,11 @@ export default function AdminDashboard() {
           <div className="glass-panel p-6 sm:p-8 rounded-3xl max-w-md w-full space-y-5 border-rose-500/40 shadow-[0_0_50px_rgba(244,63,94,0.3)]">
             <div className="flex items-center gap-3 text-rose-400 font-display font-bold text-lg border-b border-slate-800 pb-3">
               <AlertTriangle className="w-6 h-6 animate-bounce" />
-              <span>Permanently End Session?</span>
+              <span>Confirm End Session</span>
             </div>
 
             <p className="text-xs font-mono text-slate-300 leading-relaxed">
-              Are you sure you want to permanently end session <strong className="text-rose-400">[{selectedSessionId}]</strong>? Once terminated, no further student submissions can be recorded.
+              Are you sure you want to end this session? Once terminated, it cannot be resumed or reopened.
             </p>
 
             <div className="pt-2 flex items-center justify-end gap-3 font-mono text-xs">
@@ -1312,9 +1312,9 @@ export default function AdminDashboard() {
 
               <button
                 onClick={handleTerminateSessionSubmit}
-                className="px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 font-bold text-white shadow-[0_0_20px_rgba(244,63,94,0.4)]"
+                className="px-6 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 font-bold text-white shadow-[0_0_20px_rgba(244,63,94,0.4)] cursor-pointer"
               >
-                Terminate Session Permanently
+                End Session
               </button>
             </div>
           </div>
