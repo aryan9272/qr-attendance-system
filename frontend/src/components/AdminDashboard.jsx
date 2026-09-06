@@ -31,6 +31,7 @@ import {
   GraduationCap,
   BookOpen,
   Eye,
+  Calendar,
 } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
 import { fetchWithFailover } from '../utils/apiResolver';
@@ -103,9 +104,10 @@ export default function AdminDashboard() {
   const [yearFilter, setYearFilter] = useState('ALL');
   const [verificationFilter, setVerificationFilter] = useState('ALL');
 
-  // Session History Search & Status Filter
+  // Session History Search, Status & Date Filter
   const [historySearchQuery, setHistorySearchQuery] = useState('');
   const [historyStatusFilter, setHistoryStatusFilter] = useState('ALL');
+  const [historyDateFilter, setHistoryDateFilter] = useState('');
 
   // Modals Control
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -652,14 +654,55 @@ export default function AdminDashboard() {
     return 'N/A';
   };
 
-  // Filter and Sort Historical Sessions: latest created at the very top
+  const getTerminationTimestamp = (sess) => {
+    if (!sess) return 0;
+    if (sess.endedAt) {
+      const t = new Date(sess.endedAt).getTime();
+      if (!isNaN(t) && t > 0) return t;
+    }
+    if (sess.terminatedAt) {
+      const t = new Date(sess.terminatedAt).getTime();
+      if (!isNaN(t) && t > 0) return t;
+    }
+    return getSessionTimestamp(sess);
+  };
+
+  const getSessionDateString = (timestamp) => {
+    if (!timestamp) return null;
+    const d = new Date(timestamp);
+    if (isNaN(d.getTime())) return null;
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Filter and Sort Historical Sessions:
+  // 1. Live/active sessions are at the very top
+  // 2. Terminated sessions follow, ordered by "terminated lastly at top" (most recently ended at top)
   const sortedAndFilteredHistory = sessionsList
     .map((sess) => ({
       ...sess,
       _timestamp: getSessionTimestamp(sess),
+      _terminationTimestamp: getTerminationTimestamp(sess),
       _isTerminated: sess.status === 'TERMINATED' || sess.isEnded || !!sess.endedAt,
     }))
-    .sort((a, b) => b._timestamp - a._timestamp)
+    .sort((a, b) => {
+      // 1. If 1 is active and 1 is terminated: active is at the top
+      if (!a._isTerminated && b._isTerminated) return -1;
+      if (a._isTerminated && !b._isTerminated) return 1;
+
+      // 2. If both are active/in-progress: sort by newest start time
+      if (!a._isTerminated && !b._isTerminated) {
+        return b._timestamp - a._timestamp;
+      }
+
+      // 3. If both are terminated: the session terminated lastly should be at top
+      const termDiff = b._terminationTimestamp - a._terminationTimestamp;
+      if (termDiff !== 0) return termDiff;
+
+      return b._timestamp - a._timestamp;
+    })
     .filter((sess) => {
       // Filter by Status: 'ALL' | 'ACTIVE' | 'PAUSED' | 'TERMINATED'
       if (historyStatusFilter !== 'ALL') {
@@ -669,15 +712,26 @@ export default function AdminDashboard() {
         }
       }
 
-      // Search by Session ID, Name / Title, Lab / Room, Faculty / Instructor
+      // Filter by Specific Date (YYYY-MM-DD)
+      if (historyDateFilter) {
+        const startDateStr = getSessionDateString(sess._timestamp);
+        const endDateStr = getSessionDateString(sess.endedAt || sess.terminatedAt);
+        const matchesDate = startDateStr === historyDateFilter || endDateStr === historyDateFilter;
+        if (!matchesDate) {
+          return false;
+        }
+      }
+
+      // Search by Session ID, Name / Title, Lab / Room, Faculty / Instructor, or Date
       if (!historySearchQuery.trim()) return true;
       const q = historySearchQuery.toLowerCase().trim();
       const matchId = sess.sessionId?.toLowerCase().includes(q);
       const matchTitle = sess.title?.toLowerCase().includes(q);
       const matchLab = sess.labIdentifier?.toLowerCase().includes(q);
       const matchProctor = (sess.proctorName || sess.presenterName || '').toLowerCase().includes(q);
+      const matchDateStr = getFormattedDateStarted(sess).toLowerCase().includes(q);
 
-      return matchId || matchTitle || matchLab || matchProctor;
+      return matchId || matchTitle || matchLab || matchProctor || matchDateStr;
     });
 
   return (
@@ -1182,22 +1236,22 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* Search & Status Filter Controls */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 font-mono text-xs">
+            {/* Search, Date & Status Filter Controls */}
+            <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 font-mono text-xs">
               {/* Search Input */}
-              <div className="relative w-full sm:w-80">
+              <div className="relative flex-1 max-w-sm">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="text"
                   value={historySearchQuery}
                   onChange={(e) => setHistorySearchQuery(e.target.value)}
-                  placeholder="Search Session ID, Title, Room..."
+                  placeholder="Search Session ID, Title, Room, Date..."
                   className="w-full pl-10 pr-8 py-2.5 rounded-xl glass-input text-xs font-mono text-slate-200"
                 />
                 {historySearchQuery && (
                   <button
                     onClick={() => setHistorySearchQuery('')}
-                    className="absolute right-2.5 top-2.5 p-0.5 rounded text-slate-400 hover:text-white"
+                    className="absolute right-2.5 top-2.5 p-0.5 rounded text-slate-400 hover:text-white cursor-pointer"
                     title="Clear search"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -1205,19 +1259,56 @@ export default function AdminDashboard() {
                 )}
               </div>
 
-              {/* Status Filter */}
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                <span className="text-slate-400 text-xs hidden sm:inline">Status Filter:</span>
-                <select
-                  value={historyStatusFilter}
-                  onChange={(e) => setHistoryStatusFilter(e.target.value)}
-                  className="w-full sm:w-auto px-3.5 py-2.5 rounded-xl glass-input text-xs font-mono text-slate-200 bg-slate-900 border border-slate-700 cursor-pointer"
-                >
-                  <option value="ALL">All Statuses ({sessionsList.length})</option>
-                  <option value="ACTIVE">Active Sessions</option>
-                  <option value="PAUSED">Paused Sessions</option>
-                  <option value="TERMINATED">Terminated Sessions</option>
-                </select>
+              {/* Filters: Date Picker + Status Filter + Reset */}
+              <div className="flex flex-wrap items-center gap-2.5 justify-start lg:justify-end">
+                {/* Date Filter */}
+                <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-slate-300">
+                  <Calendar className="w-3.5 h-3.5 text-cyan-400" />
+                  <span className="text-[11px] text-slate-400">Date:</span>
+                  <input
+                    type="date"
+                    value={historyDateFilter}
+                    onChange={(e) => setHistoryDateFilter(e.target.value)}
+                    className="bg-transparent text-xs text-slate-200 font-mono outline-none cursor-pointer"
+                  />
+                  {historyDateFilter && (
+                    <button
+                      onClick={() => setHistoryDateFilter('')}
+                      className="p-0.5 rounded text-slate-400 hover:text-white cursor-pointer"
+                      title="Clear date filter"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Status Filter */}
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={historyStatusFilter}
+                    onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                    className="px-3.5 py-2.5 rounded-xl glass-input text-xs font-mono text-slate-200 bg-slate-900 border border-slate-700 cursor-pointer"
+                  >
+                    <option value="ALL">All Statuses ({sessionsList.length})</option>
+                    <option value="ACTIVE">Active Sessions</option>
+                    <option value="PAUSED">Paused Sessions</option>
+                    <option value="TERMINATED">Terminated Sessions</option>
+                  </select>
+                </div>
+
+                {/* Reset Filters */}
+                {(historySearchQuery || historyDateFilter || historyStatusFilter !== 'ALL') && (
+                  <button
+                    onClick={() => {
+                      setHistorySearchQuery('');
+                      setHistoryDateFilter('');
+                      setHistoryStatusFilter('ALL');
+                    }}
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-slate-700 text-xs font-mono font-semibold cursor-pointer transition-colors"
+                  >
+                    Reset
+                  </button>
+                )}
               </div>
             </div>
 
