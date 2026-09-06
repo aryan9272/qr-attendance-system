@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 
 export const getBackendUrl = () => {
@@ -37,7 +37,12 @@ export const SocketProvider = ({ children }) => {
   const [qrData, setQrData] = useState(null);
   const [countdown, setCountdown] = useState(60);
   const [currentSessionId, setCurrentSessionId] = useState(null);
+  const currentSessionIdRef = useRef(currentSessionId);
   const backendUrl = getBackendUrl();
+
+  useEffect(() => {
+    currentSessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
 
   useEffect(() => {
     console.log('[Socket.IO Frontend] Connecting to backend server:', backendUrl);
@@ -51,8 +56,8 @@ export const SocketProvider = ({ children }) => {
     newSocket.on('connect', () => {
       console.log('[Socket.IO Frontend] Connected successfully:', newSocket.id);
       setConnected(true);
-      if (currentSessionId) {
-        newSocket.emit('join-session', { sessionId: currentSessionId });
+      if (currentSessionIdRef.current) {
+        newSocket.emit('join-session', { sessionId: currentSessionIdRef.current });
       }
     });
 
@@ -102,12 +107,13 @@ export const SocketProvider = ({ children }) => {
     return () => {
       newSocket.disconnect();
     };
-  }, [backendUrl, currentSessionId]);
+  }, [backendUrl]);
 
   const joinSession = (sessionId) => {
     if (!sessionId) return;
     const cleanId = String(sessionId).trim().toUpperCase();
     setCurrentSessionId(cleanId);
+    currentSessionIdRef.current = cleanId;
     if (socket && connected) {
       socket.emit('join-session', { sessionId: cleanId });
     }

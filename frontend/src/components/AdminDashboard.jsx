@@ -146,10 +146,8 @@ export default function AdminDashboard() {
               return prev;
             }
             const activeEv = data.events.find((e) => e.status === 'ACTIVE') || data.events[0];
-            return activeEv ? activeEv.sessionId : null;
+            return prev || (activeEv ? activeEv.sessionId : null);
           });
-        } else {
-          setSelectedSessionId(null);
         }
       }
     } catch (e) {
@@ -253,16 +251,25 @@ export default function AdminDashboard() {
 
       if (data?.success) {
         const createdId = data.sessionId || data.session?.sessionId || data.event?.sessionId;
+        const createdSession = data.session || data.event || {
+          sessionId: createdId,
+          labIdentifier: newLabIdentifier.trim(),
+          title: newTitle.trim(),
+          proctorName: (newPresenterName || 'Faculty In-Charge').trim(),
+          status: 'PAUSED',
+        };
+
         setIsCreateModalOpen(false);
         setNewLabIdentifier('');
         setNewTitle('');
         setNewPresenterName('');
         setRequireMobile(false);
 
-        await fetchSessions();
         if (createdId) {
+          setSessionsList((prev) => [createdSession, ...prev.filter((s) => s.sessionId !== createdId)]);
           handleSelectSession(createdId);
         }
+        fetchSessions();
       } else {
         alert(data?.message || 'Failed to create session.');
       }

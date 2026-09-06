@@ -520,16 +520,29 @@ exports.getSessionHistory = async (req, res) => {
  */
 exports.getEvents = async (req, res) => {
   try {
-    let events = [];
+    let dbEvents = [];
     if (getIsConnected()) {
-      events = await Event.find({ status: { $ne: 'TERMINATED' } }).sort({ createdAt: -1 });
+      dbEvents = await Event.find({ status: { $ne: 'TERMINATED' } }).sort({ createdAt: -1 });
     }
 
-    return res.json({ success: true, events: events || [] });
+    const memoryEvents = Array.from(activeSessions.values()).filter((s) => s.status !== 'TERMINATED');
+
+    const eventMap = new Map();
+    memoryEvents.forEach((s) => eventMap.set(s.sessionId, s));
+    dbEvents.forEach((e) => {
+      const obj = e.toObject ? e.toObject() : e;
+      if (!eventMap.has(obj.sessionId)) {
+        eventMap.set(obj.sessionId, obj);
+      }
+    });
+
+    const events = Array.from(eventMap.values());
+    return res.json({ success: true, events });
   } catch (err) {
+    const memoryEvents = Array.from(activeSessions.values()).filter((s) => s.status !== 'TERMINATED');
     return res.json({
       success: true,
-      events: [],
+      events: memoryEvents,
     });
   }
 };
