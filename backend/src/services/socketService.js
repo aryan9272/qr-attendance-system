@@ -433,14 +433,14 @@ function rotateToken(io, sessionId) {
     timestamp: now,
   };
 
-  // Shift current token to previousToken for 20s Grace Period
+  // Shift current token to previousToken for 10s Grace Period
   session.previousToken = session.currentToken;
   session.currentToken = encryptToken(payload);
   session.currentCountdown = session.tokenValiditySeconds;
   session.tokenCreatedAt = now;
 
   const hostDomain = process.env.PUBLIC_FRONTEND_URL || process.env.VITE_APP_URL || `http://${activeNetworkIp}:${frontendPort}`;
-  session.qrUrl = `${hostDomain}/scan?token=${encodeURIComponent(session.currentToken)}`;
+  session.qrUrl = `${hostDomain}/scan?sessionId=${encodeURIComponent(session.sessionId)}&token=${encodeURIComponent(session.currentToken)}`;
 
   io.to(`session:${sessionId}`).emit('qr-update', {
     sessionId: session.sessionId,

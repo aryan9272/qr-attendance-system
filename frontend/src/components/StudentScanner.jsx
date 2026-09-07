@@ -20,6 +20,10 @@ import {
   MapPin,
   Radio,
   CheckCheck,
+  ShieldAlert,
+  Clock,
+  X,
+  ArrowRight,
 } from 'lucide-react';
 import VerificationResultModal from './VerificationResultModal';
 import { useSocket } from '../context/SocketContext';
@@ -114,6 +118,17 @@ export default function StudentScanner() {
       return null;
     }
   });
+
+  const [isOAuthLoading, setIsOAuthLoading] = useState(false);
+  const [oauthError, setOauthError] = useState('');
+
+  // Anti-Proxy Top Pop-Up Modal State
+  const [isAntiProxyModalOpen, setIsAntiProxyModalOpen] = useState(false);
+  const [antiProxyModalData, setAntiProxyModalData] = useState(null);
+
+  // Dynamic QR Expired Pop-Up Modal State
+  const [isQrExpiredModalOpen, setIsQrExpiredModalOpen] = useState(false);
+  const [qrExpiredMessage, setQrExpiredMessage] = useState('');
 
   // Cached Profile State
   const [isCachedProfile, setIsCachedProfile] = useState(false);
@@ -245,23 +260,52 @@ export default function StudentScanner() {
   const effectiveBoundary = adminRadius + Math.min(gpsAccuracy, 30);
   const isInsideGeofence = !isGeofenceActive || isTargetPlaceholder || liveDistanceMeters <= effectiveBoundary;
 
-  // Initialize Google Identity Services (GSI) SDK
+  // Universal Google Identity Services & OAuth 2.0 Token Client Initialization
   useEffect(() => {
-    const loadGsi = () => {
-      if (window.google?.accounts?.id) {
-        initGsi();
-        return;
-      }
-      const script = document.createElement('script');
-      script.src = 'https://accounts.google.com/gsi/client';
-      script.async = true;
-      script.defer = true;
-      script.onload = initGsi;
-      document.body.appendChild(script);
-    };
-
-    const initGsi = () => {
+    const setupGoogleAuth = () => {
       try {
+        // 1. Modern OAuth 2.0 Token Client (Universal Native Google Account Chooser)
+        if (window.google?.accounts?.oauth2) {
+          const client = window.google.accounts.oauth2.initTokenClient({
+            client_id: googleClientId,
+            scope: 'email profile',
+            callback: async (tokenResponse) => {
+              if (tokenResponse?.access_token) {
+                try {
+                  setIsOAuthLoading(true);
+                  const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                    headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+                  });
+                  const userProfile = await res.json();
+                  if (userProfile?.email) {
+                    setGoogleStudent(userProfile);
+                    setStudentEmail(userProfile.email);
+                    if (userProfile.name) {
+                      setStudentName((prev) => prev || userProfile.name);
+                    }
+                    localStorage.setItem('proxyqr_student_google', JSON.stringify(userProfile));
+                    setOauthError('');
+                  }
+                } catch (e) {
+                  console.warn('Google userinfo fetch error:', e);
+                  setOauthError('Failed to fetch Google profile. Please try again.');
+                } finally {
+                  setIsOAuthLoading(false);
+                }
+              } else if (tokenResponse?.error) {
+                setIsOAuthLoading(false);
+                setOauthError('Google sign-in was cancelled or encountered an error.');
+              }
+            },
+            error_callback: (err) => {
+              console.warn('Google OAuth Token Client Error:', err);
+              setIsOAuthLoading(false);
+            },
+          });
+          window._googleTokenClient = client;
+        }
+
+        // 2. Standard Google Sign-In (GSI) Button & ID Token Initializer
         if (window.google?.accounts?.id) {
           window.google.accounts.id.initialize({
             client_id: googleClientId,
@@ -280,15 +324,36 @@ export default function StudentScanner() {
             });
           }
         }
-      } catch (e) {
-        console.warn('GSI init note:', e);
+
+        // Auto-Trigger OAuth: If user is not yet signed in, prompt automatically
+        if (!googleStudent && !localStorage.getItem('proxyqr_student_google')) {
+          const timer = setTimeout(() => {
+            if (window.google?.accounts?.id) {
+              try {
+                window.google.accounts.id.prompt();
+              } catch (e) {}
+            }
+          }, 800);
+          return () => clearTimeout(timer);
+        }
+      } catch (err) {
+        console.warn('Google Auth setup error:', err);
       }
     };
 
-    loadGsi();
-  }, [googleClientId]);
+    if (window.google?.accounts) {
+      setupGoogleAuth();
+    } else {
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.onload = setupGoogleAuth;
+      document.body.appendChild(script);
+    }
+  }, [googleClientId, googleStudent]);
 
-  // Handle Google OAuth Credential Response
+  // Handle Google OAuth Credential Response (ID Token)
   const handleGoogleCredentialResponse = (response) => {
     try {
       const base64Url = response.credential.split('.')[1];
@@ -308,18 +373,37 @@ export default function StudentScanner() {
           setStudentName(parsed.name);
         }
         localStorage.setItem('proxyqr_student_google', JSON.stringify(parsed));
+        setOauthError('');
       }
     } catch (err) {
       console.warn('Google Auth Credential Parse Error:', err);
     }
   };
 
-  const triggerGoogleAuthPrompt = () => {
-    if (window.google?.accounts?.id) {
-      window.google.accounts.id.prompt();
-    } else {
-      alert('Google Auth SDK is loading... Please try again in a moment.');
+  // Universal Google Sign-In Click Trigger
+  const handleGoogleSignInClick = () => {
+    setOauthError('');
+    setIsOAuthLoading(true);
+
+    if (window._googleTokenClient) {
+      try {
+        window._googleTokenClient.requestAccessToken({ prompt: 'select_account' });
+        return;
+      } catch (e) {
+        console.warn('Token client request error:', e);
+      }
     }
+
+    if (window.google?.accounts?.id) {
+      try {
+        window.google.accounts.id.prompt();
+        setIsOAuthLoading(false);
+        return;
+      } catch (e) {}
+    }
+
+    setIsOAuthLoading(false);
+    setOauthError('Google Sign-In is initializing. Please tap "Continue with Google" again.');
   };
 
   const handleGoogleLogout = () => {
@@ -374,17 +458,22 @@ export default function StudentScanner() {
           (h) => h.sessionId === currentSessionId && (h.regNo !== inputRegNo || h.email !== inputEmail)
         );
         if (matchForSession) {
-          return true; // Proxy Lock Violation Detected!
+          return matchForSession; // Found existing submission for a DIFFERENT student on this device!
         }
       }
     } catch (e) {}
-    return false;
+    return null;
   };
 
   // Submit Attendance Handler
   const handleSubmitAttendance = async (e) => {
     e.preventDefault();
     setSubmitError('');
+
+    if (!googleStudent) {
+      setSubmitError('Authentication required: Please complete Step 1 (Google Sign-In) first.');
+      return;
+    }
 
     if (!studentName.trim() || !regNo.trim() || !studentEmail.trim()) {
       setSubmitError('Please complete Name, PRN / Registration No, and Email fields.');
@@ -404,8 +493,17 @@ export default function StudentScanner() {
     const cleanRegNo = regNo.trim().toUpperCase();
     const cleanEmail = studentEmail.trim().toLowerCase();
 
-    // Check Anti-Proxy Device Lock
-    if (checkAntiProxyDeviceLock(cleanRegNo, cleanEmail)) {
+    // Check Client-Side Anti-Proxy Device Lock
+    const existingSubmission = checkAntiProxyDeviceLock(cleanRegNo, cleanEmail);
+    if (existingSubmission) {
+      setAntiProxyModalData({
+        originalStudent: existingSubmission.studentName || existingSubmission.regNo,
+        originalRegNo: existingSubmission.regNo,
+        originalEmail: existingSubmission.email,
+        currentRegNo: cleanRegNo,
+        sessionId: currentSessionId,
+      });
+      setIsAntiProxyModalOpen(true);
       setSubmitError('Anti-Proxy Lock: Multiple student submissions from the same device are prohibited.');
       return;
     }
@@ -483,6 +581,30 @@ export default function StudentScanner() {
       } else {
         const errMsg = data?.error || data?.message || 'Attendance verification failed.';
         setSubmitError(errMsg);
+
+        // Check for Specific Anti-Proxy Violation from Server
+        if (data?.errorType === 'ANTI_PROXY_DEVICE_LOCK') {
+          setAntiProxyModalData({
+            originalStudent: data.originalStudent || 'Another Student',
+            originalRegNo: data.originalRegNo || '',
+            originalEmail: data.originalEmail || '',
+            currentRegNo: cleanRegNo,
+            sessionId: currentSessionId,
+          });
+          setIsAntiProxyModalOpen(true);
+          return;
+        }
+
+        // Check for Dynamic QR Expired Token
+        if (data?.errorType === 'EXPIRED_TOKEN') {
+          setQrExpiredMessage(
+            data.error ||
+              'Dynamic QR code has expired (60s interval + 10s grace period exceeded). Please scan the current live QR code from the projector screen.'
+          );
+          setIsQrExpiredModalOpen(true);
+          return;
+        }
+
         setVerificationResult({
           success: false,
           error: errMsg,
@@ -577,119 +699,6 @@ export default function StudentScanner() {
           </div>
         )}
 
-        {/* GEOFENCE & GPS ACCURACY CARD */}
-        <div className="glass-panel p-4 rounded-3xl space-y-2.5 border border-slate-800 text-xs font-mono">
-          <div className="flex items-center justify-between">
-            <span className="flex items-center gap-1.5 font-bold text-slate-300">
-              <MapPin className="w-3.5 h-3.5 text-cyan-400" /> Classroom Proximity
-            </span>
-            <button
-              type="button"
-              onClick={requestGpsFix}
-              disabled={isRefreshingGps}
-              className="flex items-center gap-1 text-[11px] text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
-              title="Calibrate GPS Triangulation"
-            >
-              <RefreshCw className={`w-3 h-3 ${isRefreshingGps ? 'animate-spin' : ''}`} />
-              <span>Calibrate GPS</span>
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
-            <div>
-              <div className="text-[10px] text-slate-400">ESTIMATED DISTANCE</div>
-              <div className={`font-display font-bold text-sm ${isInsideGeofence ? 'text-emerald-400' : 'text-amber-400'}`}>
-                {!isGeofenceActive
-                  ? 'Bypassed (Anywhere)'
-                  : isTargetPlaceholder
-                  ? 'Auto-Anchored'
-                  : `~${liveDistanceMeters}m away`}
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="text-[10px] text-slate-400">ALLOWED BOUNDARY</div>
-              <div className="font-bold text-slate-200 text-sm">
-                {!isGeofenceActive
-                  ? 'Universal'
-                  : isTargetPlaceholder
-                  ? 'Classroom Sync'
-                  : `${effectiveBoundary}m max`}
-              </div>
-            </div>
-            <div>
-              <span
-                className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                  isInsideGeofence
-                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                    : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                }`}
-              >
-                {!isGeofenceActive
-                  ? 'GEOFENCE OFF'
-                  : isInsideGeofence
-                  ? 'IN RANGE'
-                  : 'CHECK RANGE'}
-              </span>
-            </div>
-          </div>
-
-          {gpsWarning && (
-            <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] flex items-start gap-2">
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
-              <span>{gpsWarning}</span>
-            </div>
-          )}
-        </div>
-
-        {/* GOOGLE OAUTH 2.0 AUTHENTICATION CARD */}
-        <div className="glass-panel p-4 rounded-3xl space-y-3 border border-slate-800">
-          <div className="text-xs font-mono font-bold text-slate-300 flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-cyan-400">
-              <Lock className="w-3.5 h-3.5" /> Identity Verification
-            </span>
-            <span className="text-[10px] text-slate-500">
-              {googleStudent ? 'VERIFIED' : 'OPTIONAL 1-TAP'}
-            </span>
-          </div>
-
-          {!googleStudent ? (
-            <div className="space-y-2">
-              <div id="google-student-btn-container" className="w-full flex justify-center"></div>
-
-              <button
-                type="button"
-                onClick={triggerGoogleAuthPrompt}
-                className="w-full py-2.5 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs font-mono flex items-center justify-center gap-2.5 shadow-[0_0_20px_rgba(255,255,255,0.2)] transition-all cursor-pointer"
-              >
-                <GoogleGIcon />
-                <span>Continue with Google</span>
-              </button>
-              <p className="text-[10px] font-mono text-slate-400 text-center">
-                Sign in with Google or enter your college email manually below
-              </p>
-            </div>
-          ) : (
-            <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between text-xs font-mono">
-              <div className="flex items-center gap-2.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                <div>
-                  <div className="font-bold text-emerald-300">{googleStudent.email}</div>
-                  <div className="text-[10px] text-slate-400">Authenticated via Google OAuth 2.0</div>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleGoogleLogout}
-                className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-800 transition-colors cursor-pointer"
-                title="Change Google Account"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-        </div>
-
         {/* PAUSED OR TERMINATED SESSION NOTICE */}
         {isSessionTerminated && (
           <div className="p-4 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs font-mono flex items-center gap-3">
@@ -721,180 +730,508 @@ export default function StudentScanner() {
           </div>
         )}
 
-        {/* CACHED PROFILE (1-TAP MODE) TOGGLE */}
-        {isCachedProfile && (
-          <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-between text-xs font-mono">
-            <div className="flex items-center gap-2 text-emerald-400 font-semibold">
-              <Check className="w-4 h-4" />
-              <span>Profile Loaded (1-Tap Mode)</span>
+        {/* ========================================================================= */}
+        {/* STEP 1: GOOGLE OAUTH 2.0 AUTHENTICATION GATE (RENDERED WHEN NOT LOGGED IN) */}
+        {/* ========================================================================= */}
+        {!googleStudent ? (
+          <div className="glass-panel p-6 rounded-3xl space-y-5 border-2 border-cyan-500/40 shadow-[0_0_40px_rgba(6,182,212,0.2)] animate-fadeIn text-center">
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold uppercase tracking-wider">
+                <Lock className="w-3.5 h-3.5" />
+                <span>Step 1 of 2: Authenticate Identity</span>
+              </div>
+              <h3 className="font-display font-extrabold text-2xl text-white">
+                Google Sign-In Required
+              </h3>
+              <p className="text-xs font-mono text-slate-300 max-w-sm mx-auto leading-relaxed">
+                To guarantee zero-proxy verification, you must sign in with your college or personal Google account before filling out attendance details.
+              </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setIsEditingProfile(!isEditingProfile)}
-              className="text-cyan-400 hover:underline text-[11px] flex items-center gap-1 cursor-pointer"
-            >
-              <Edit2 className="w-3 h-3" />
-              <span>{isEditingProfile ? 'Lock Details' : 'Edit Details'}</span>
-            </button>
+
+            {oauthError && (
+              <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-mono flex items-start gap-2 text-left">
+                <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+                <span>{oauthError}</span>
+              </div>
+            )}
+
+            <div className="space-y-3 py-2">
+              <div id="google-student-btn-container" className="w-full flex justify-center min-h-[44px]"></div>
+
+              <button
+                type="button"
+                disabled={isOAuthLoading}
+                onClick={handleGoogleSignInClick}
+                className="w-full py-3.5 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-display font-bold text-sm flex items-center justify-center gap-3 shadow-[0_0_25px_rgba(255,255,255,0.25)] hover:shadow-[0_0_35px_rgba(255,255,255,0.4)] transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50"
+              >
+                {isOAuthLoading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-slate-900" />
+                    <span>Connecting to Google...</span>
+                  </>
+                ) : (
+                  <>
+                    <GoogleGIcon />
+                    <span>Continue with Google</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Anti-Proxy Notice Below OAuth */}
+            <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 text-left space-y-1.5 text-xs font-mono">
+              <div className="flex items-center gap-2 text-amber-400 font-bold text-[11px]">
+                <ShieldCheck className="w-4 h-4 flex-shrink-0" />
+                <span>Anti-Proxy Sentinel Protection</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Each student must authenticate from their own personal device. One submission per device is enforced for this session.
+              </p>
+            </div>
+          </div>
+        ) : (
+          /* ========================================================================= */
+          /* STEP 2: ATTENDANCE INTAKE FORM (RENDERED ONCE GOOGLE AUTHENTICATION IS OK) */
+          /* ========================================================================= */
+          <div className="space-y-4 animate-fadeIn">
+            {/* Authenticated Identity Header Pill */}
+            <div className="glass-panel p-4 rounded-3xl border border-emerald-500/40 bg-emerald-500/5 flex items-center justify-between text-xs font-mono">
+              <div className="flex items-center gap-3">
+                {googleStudent.picture ? (
+                  <img
+                    src={googleStudent.picture}
+                    alt={googleStudent.name || 'Student'}
+                    className="w-10 h-10 rounded-full border-2 border-emerald-400 object-cover shadow-sm"
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold flex items-center justify-center text-sm">
+                    {(googleStudent.name || googleStudent.email || 'S').charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div>
+                  <div className="flex items-center gap-1.5 font-bold text-white text-sm">
+                    <span>{googleStudent.name || studentName || 'Authenticated Student'}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      VERIFIED
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-emerald-300/90 font-mono">
+                    {googleStudent.email}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleGoogleLogout}
+                className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-800 transition-colors"
+                title="Switch Google Account"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* GEOFENCE & GPS ACCURACY CARD */}
+            <div className="glass-panel p-4 rounded-3xl space-y-2.5 border border-slate-800 text-xs font-mono">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 font-bold text-slate-300">
+                  <MapPin className="w-3.5 h-3.5 text-cyan-400" /> Classroom Proximity
+                </span>
+                <button
+                  type="button"
+                  onClick={requestGpsFix}
+                  disabled={isRefreshingGps}
+                  className="flex items-center gap-1 text-[11px] text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
+                  title="Calibrate GPS Triangulation"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isRefreshingGps ? 'animate-spin' : ''}`} />
+                  <span>Calibrate GPS</span>
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
+                <div>
+                  <div className="text-[10px] text-slate-400">ESTIMATED DISTANCE</div>
+                  <div className={`font-display font-bold text-sm ${isInsideGeofence ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {!isGeofenceActive
+                      ? 'Bypassed (Anywhere)'
+                      : isTargetPlaceholder
+                      ? 'Auto-Anchored'
+                      : `~${liveDistanceMeters}m away`}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[10px] text-slate-400">ALLOWED BOUNDARY</div>
+                  <div className="font-bold text-slate-200 text-sm">
+                    {!isGeofenceActive
+                      ? 'Universal'
+                      : isTargetPlaceholder
+                      ? 'Classroom Sync'
+                      : `${effectiveBoundary}m max`}
+                  </div>
+                </div>
+                <div>
+                  <span
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                      !isGeofenceActive
+                        ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'
+                        : isInsideGeofence
+                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                        : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                    }`}
+                  >
+                    {!isGeofenceActive
+                      ? 'GEOFENCE OFF'
+                      : isInsideGeofence
+                      ? 'IN RANGE'
+                      : 'CHECK RANGE'}
+                  </span>
+                </div>
+              </div>
+
+              {gpsWarning && (
+                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] flex items-start gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+                  <span>{gpsWarning}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Anti-Proxy Device Status Notice */}
+            <div className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800 text-xs font-mono flex items-center justify-between">
+              <span className="text-slate-400 flex items-center gap-1.5 text-[11px]">
+                <Lock className="w-3.5 h-3.5 text-cyan-400" /> Anti-Proxy Device Sentinel
+              </span>
+              <span className="text-[10px] font-bold text-cyan-300 px-2.5 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/20">
+                1 SUBMISSION / DEVICE
+              </span>
+            </div>
+
+            {/* CACHED PROFILE (1-TAP MODE) TOGGLE */}
+            {isCachedProfile && (
+              <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-between text-xs font-mono">
+                <div className="flex items-center gap-2 text-emerald-400 font-semibold">
+                  <Check className="w-4 h-4" />
+                  <span>Profile Loaded (1-Tap Mode)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingProfile(!isEditingProfile)}
+                  className="text-cyan-400 hover:underline text-[11px] flex items-center gap-1 cursor-pointer"
+                >
+                  <Edit2 className="w-3 h-3" />
+                  <span>{isEditingProfile ? 'Lock Details' : 'Edit Details'}</span>
+                </button>
+              </div>
+            )}
+
+            {/* STUDENT INTAKE FORM */}
+            <form onSubmit={handleSubmitAttendance} className="glass-panel p-6 rounded-3xl space-y-4 border border-slate-800 text-xs font-mono">
+              <div className="flex items-center justify-between pb-1 border-b border-slate-800 text-slate-400 text-[11px]">
+                <span>Step 2 of 2: Confirm Details</span>
+                <span className="text-cyan-400 flex items-center gap-1">
+                  <Clock className="w-3 h-3" /> 60s QR + 10s Grace
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-semibold flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-cyan-400" />
+                  Full Name
+                </label>
+                <input
+                  type="text"
+                  value={studentName}
+                  onChange={(e) => setStudentName(e.target.value)}
+                  placeholder="e.g. Aryan Kale"
+                  readOnly={isCachedProfile && !isEditingProfile}
+                  required
+                  className={`w-full px-4 py-3 rounded-xl glass-input text-slate-200 font-sans text-sm ${
+                    isCachedProfile && !isEditingProfile ? 'bg-slate-900/60 border-slate-800 cursor-not-allowed' : ''
+                  }`}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-semibold flex items-center gap-1.5">
+                  <Hash className="w-3.5 h-3.5 text-cyan-400" />
+                  Registration Number / PRN
+                </label>
+                <input
+                  type="text"
+                  value={regNo}
+                  onChange={(e) => setRegNo(e.target.value.toUpperCase())}
+                  placeholder="e.g. 2024BIT020"
+                  readOnly={isCachedProfile && !isEditingProfile}
+                  required
+                  className={`w-full px-4 py-3 rounded-xl glass-input text-cyan-300 font-mono font-bold text-sm ${
+                    isCachedProfile && !isEditingProfile ? 'bg-slate-900/60 border-slate-800 cursor-not-allowed' : ''
+                  }`}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-semibold flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-slate-300">
+                    <Mail className="w-3.5 h-3.5 text-cyan-400" /> Google Verified Email
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> LOCKED
+                  </span>
+                </label>
+                <input
+                  type="email"
+                  value={studentEmail}
+                  readOnly
+                  required
+                  className="w-full px-4 py-3 rounded-xl glass-input font-sans text-sm bg-slate-900/90 text-emerald-300 border-emerald-500/40 cursor-not-allowed font-semibold"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-semibold flex items-center gap-1.5">
+                    <GraduationCap className="w-3.5 h-3.5 text-cyan-400" />
+                    Academic Year
+                  </label>
+                  <select
+                    value={year}
+                    onChange={(e) => setYear(e.target.value)}
+                    disabled={isCachedProfile && !isEditingProfile}
+                    className="w-full px-3 py-3 rounded-xl glass-input text-slate-200"
+                  >
+                    {YEARS.map((yr) => (
+                      <option key={yr} value={yr}>
+                        {yr}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-semibold flex items-center gap-1.5">
+                    <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
+                    Branch / Major
+                  </label>
+                  <select
+                    value={branch}
+                    onChange={(e) => setBranch(e.target.value)}
+                    disabled={isCachedProfile && !isEditingProfile}
+                    className="w-full px-3 py-3 rounded-xl glass-input text-slate-200"
+                  >
+                    {DEPARTMENTS.map((dept) => (
+                      <option key={dept} value={dept}>
+                        {dept}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {requireMobileNumber && (
+                <div className="space-y-1.5">
+                  <label className="text-slate-300 font-semibold flex items-center gap-1.5">
+                    <Phone className="w-3.5 h-3.5 text-cyan-400" />
+                    Mobile Phone Number
+                  </label>
+                  <input
+                    type="tel"
+                    value={mobileNumber}
+                    onChange={(e) => setMobileNumber(e.target.value)}
+                    placeholder="9876543210"
+                    readOnly={isCachedProfile && !isEditingProfile}
+                    required={requireMobileNumber}
+                    className="w-full px-4 py-3 rounded-xl glass-input text-slate-200"
+                  />
+                </div>
+              )}
+
+              {/* ATTENDANCE CONFIRMATION BUTTON */}
+              <button
+                type="submit"
+                disabled={isSubmitting || isSessionPaused || isSessionTerminated || !activeToken}
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 text-white font-display font-extrabold text-sm shadow-[0_0_25px_rgba(6,182,212,0.4)] hover:shadow-[0_0_35px_rgba(6,182,212,0.6)] transition-all active:scale-[0.99] disabled:opacity-40 flex items-center justify-center gap-2 cursor-pointer mt-4"
+              >
+                {isSubmitting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Verifying GPS & Security Token...</span>
+                  </>
+                ) : isAlreadyMarked ? (
+                  <>
+                    <CheckCheck className="w-4 h-4 text-emerald-300" />
+                    <span>Update / Re-Confirm Attendance</span>
+                  </>
+                ) : isCachedProfile && !isEditingProfile ? (
+                  <>
+                    <Send className="w-4 h-4" />
+                    <span>1-Tap Confirm Attendance ({studentName || regNo})</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    <span>Confirm & Mark Attendance</span>
+                  </>
+                )}
+              </button>
+            </form>
           </div>
         )}
-
-        {/* STUDENT INTAKE FORM */}
-        <form onSubmit={handleSubmitAttendance} className="glass-panel p-6 rounded-3xl space-y-4 border border-slate-800 text-xs font-mono">
-          <div className="space-y-1.5">
-            <label className="text-slate-300 font-semibold flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5 text-cyan-400" />
-              Full Name
-            </label>
-            <input
-              type="text"
-              value={studentName}
-              onChange={(e) => setStudentName(e.target.value)}
-              placeholder="e.g. Aryan Kale"
-              readOnly={isCachedProfile && !isEditingProfile}
-              required
-              className={`w-full px-4 py-3 rounded-xl glass-input text-slate-200 font-sans text-sm ${
-                isCachedProfile && !isEditingProfile ? 'bg-slate-900/60 border-slate-800 cursor-not-allowed' : ''
-              }`}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-slate-300 font-semibold flex items-center gap-1.5">
-              <Hash className="w-3.5 h-3.5 text-cyan-400" />
-              Registration Number / PRN
-            </label>
-            <input
-              type="text"
-              value={regNo}
-              onChange={(e) => setRegNo(e.target.value.toUpperCase())}
-              placeholder="e.g. 2024BIT020"
-              readOnly={isCachedProfile && !isEditingProfile}
-              required
-              className={`w-full px-4 py-3 rounded-xl glass-input text-cyan-300 font-mono font-bold text-sm ${
-                isCachedProfile && !isEditingProfile ? 'bg-slate-900/60 border-slate-800 cursor-not-allowed' : ''
-              }`}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-slate-300 font-semibold flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-slate-300">
-                <Mail className="w-3.5 h-3.5 text-cyan-400" /> Student Email Address
-              </span>
-              {googleStudent && (
-                <span className="text-[10px] text-emerald-400 font-mono">GOOGLE VERIFIED</span>
-              )}
-            </label>
-            <input
-              type="email"
-              value={studentEmail}
-              onChange={(e) => setStudentEmail(e.target.value)}
-              placeholder="e.g. 2024bit020@sggs.ac.in"
-              readOnly={!!googleStudent || (isCachedProfile && !isEditingProfile)}
-              required
-              className={`w-full px-4 py-3 rounded-xl glass-input font-sans text-sm ${
-                googleStudent
-                  ? 'bg-slate-900/90 text-emerald-300 border-emerald-500/40 cursor-not-allowed font-semibold'
-                  : isCachedProfile && !isEditingProfile
-                  ? 'bg-slate-900/60 border-slate-800 cursor-not-allowed text-slate-200'
-                  : 'text-slate-200'
-              }`}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-slate-300 font-semibold flex items-center gap-1.5">
-                <GraduationCap className="w-3.5 h-3.5 text-cyan-400" />
-                Academic Year
-              </label>
-              <select
-                value={year}
-                onChange={(e) => setYear(e.target.value)}
-                disabled={isCachedProfile && !isEditingProfile}
-                className="w-full px-3 py-3 rounded-xl glass-input text-slate-200"
-              >
-                {YEARS.map((yr) => (
-                  <option key={yr} value={yr}>
-                    {yr}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-slate-300 font-semibold flex items-center gap-1.5">
-                <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
-                Branch / Major
-              </label>
-              <select
-                value={branch}
-                onChange={(e) => setBranch(e.target.value)}
-                disabled={isCachedProfile && !isEditingProfile}
-                className="w-full px-3 py-3 rounded-xl glass-input text-slate-200"
-              >
-                {DEPARTMENTS.map((dept) => (
-                  <option key={dept} value={dept}>
-                    {dept}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {requireMobileNumber && (
-            <div className="space-y-1.5">
-              <label className="text-slate-300 font-semibold flex items-center gap-1.5">
-                <Phone className="w-3.5 h-3.5 text-cyan-400" />
-                Mobile Phone Number
-              </label>
-              <input
-                type="tel"
-                value={mobileNumber}
-                onChange={(e) => setMobileNumber(e.target.value)}
-                placeholder="9876543210"
-                readOnly={isCachedProfile && !isEditingProfile}
-                required={requireMobileNumber}
-                className="w-full px-4 py-3 rounded-xl glass-input text-slate-200"
-              />
-            </div>
-          )}
-
-          {/* ATTENDANCE CONFIRMATION BUTTON */}
-          <button
-            type="submit"
-            disabled={isSubmitting || isSessionPaused || isSessionTerminated || !activeToken}
-            className="w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 text-white font-display font-extrabold text-sm shadow-[0_0_25px_rgba(6,182,212,0.4)] hover:shadow-[0_0_35px_rgba(6,182,212,0.6)] transition-all active:scale-[0.99] disabled:opacity-40 flex items-center justify-center gap-2 cursor-pointer mt-4"
-          >
-            {isSubmitting ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Verifying GPS & Security Token...</span>
-              </>
-            ) : isAlreadyMarked ? (
-              <>
-                <CheckCheck className="w-4 h-4 text-emerald-300" />
-                <span>Update / Re-Confirm Attendance</span>
-              </>
-            ) : isCachedProfile && !isEditingProfile ? (
-              <>
-                <Send className="w-4 h-4" />
-                <span>1-Tap Confirm Attendance ({studentName || regNo})</span>
-              </>
-            ) : (
-              <>
-                <Send className="w-4 h-4" />
-                <span>Confirm & Mark Attendance</span>
-              </>
-            )}
-          </button>
-        </form>
       </div>
 
       <footer className="pt-6 text-center text-[11px] font-mono text-slate-400">
         <span>ProxyQr Sentinel • Dynamic Anti-Proxy Verification</span>
       </footer>
+
+      {/* ========================================================================= */}
+      {/* ANTI-PROXY LOCK TOP POPUP MODAL (TRIGGERED WHEN ATTEMPTING FOR ANOTHER)  */}
+      {/* ========================================================================= */}
+      {isAntiProxyModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-start justify-center p-4 pt-12 sm:pt-16 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+          <div className="relative w-full max-w-md glass-panel p-6 rounded-3xl border-2 border-rose-500/60 shadow-[0_0_50px_rgba(244,63,94,0.4)] space-y-4 animate-slideDown">
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={() => setIsAntiProxyModalOpen(false)}
+              className="absolute top-4 right-4 p-2 rounded-full bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="text-center space-y-2">
+              <div className="inline-flex p-3.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/40 shadow-[0_0_25px_rgba(244,63,94,0.4)] animate-pulse">
+                <ShieldAlert className="w-10 h-10" />
+              </div>
+              <h3 className="font-display text-xl sm:text-2xl font-black text-white">
+                ANTI-PROXY LOCK ACTIVATED
+              </h3>
+              <span className="inline-block text-[11px] font-mono font-bold px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 uppercase">
+                Single-Device Policy Violation
+              </span>
+            </div>
+
+            <div className="bg-slate-950/90 p-4 rounded-2xl border border-rose-500/30 space-y-2.5 text-xs font-mono">
+              <p className="text-rose-200 leading-relaxed">
+                You cannot mark attendance for another student. This smartphone is already locked to a previously recorded student for this session:
+              </p>
+              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1 text-slate-300 text-[11px]">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Session ID:</span>
+                  <span className="text-cyan-400 font-bold">{antiProxyModalData?.sessionId || currentSessionId}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Registered Student:</span>
+                  <span className="text-emerald-400 font-bold">
+                    {antiProxyModalData?.originalStudent || antiProxyModalData?.originalRegNo || 'Existing Attendee'}
+                  </span>
+                </div>
+                {antiProxyModalData?.originalRegNo && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Registered PRN:</span>
+                    <span className="text-white font-bold">{antiProxyModalData.originalRegNo}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Attempted PRN:</span>
+                  <span className="text-rose-400 font-bold">{antiProxyModalData?.currentRegNo || regNo}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Device Sentinel:</span>
+                  <span className="text-slate-400 text-[10px] truncate max-w-[180px]">{deviceUuid}</span>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Each student must scan the QR code and verify attendance from their own personal smartphone.
+              </p>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setIsAntiProxyModalOpen(false)}
+                className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs font-mono transition-colors"
+              >
+                I Understand & Close
+              </button>
+              {isAlreadyMarked && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAntiProxyModalOpen(false);
+                    setVerificationResult({
+                      success: true,
+                      message: 'Viewing your recorded attendance.',
+                      data: {
+                        user: markedDetails?.regNo || regNo,
+                        userName: markedDetails?.studentName || studentName,
+                        event: qrData?.title || currentSessionId,
+                        sessionTitle: qrData?.title || currentSessionId,
+                        distanceMeters: liveDistanceMeters,
+                        allowedRadiusMeters: effectiveBoundary,
+                        timestamp: markedDetails?.timestamp || Date.now(),
+                      },
+                    });
+                    setModalOpen(true);
+                  }}
+                  className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs font-mono transition-colors"
+                >
+                  View Receipt
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* DYNAMIC QR EXPIRED POPUP MODAL (TRIGGERED WHEN TOKEN EXCEEDS 60s+10s GRACE)*/}
+      {/* ========================================================================= */}
+      {isQrExpiredModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+          <div className="relative w-full max-w-md glass-panel p-6 rounded-3xl border-2 border-amber-500/60 shadow-[0_0_50px_rgba(245,158,11,0.3)] space-y-4 text-center animate-scaleUp">
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={() => setIsQrExpiredModalOpen(false)}
+              className="absolute top-4 right-4 p-2 rounded-full bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="inline-flex p-3.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-[0_0_25px_rgba(245,158,11,0.3)] animate-pulse">
+              <Clock className="w-10 h-10" />
+            </div>
+
+            <h3 className="font-display text-xl sm:text-2xl font-black text-white">
+              DYNAMIC QR CODE EXPIRED
+            </h3>
+
+            <span className="inline-block text-[11px] font-mono font-bold px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase">
+              Time Window Exceeded (60s + 10s Grace)
+            </span>
+
+            <p className="text-xs font-mono text-slate-300 leading-relaxed bg-slate-950/80 p-3.5 rounded-2xl border border-slate-800">
+              {qrExpiredMessage ||
+                'The security token for this QR code has expired. Attendance must be marked within 60 seconds (with a 10s grace period) of generation to prevent photo-sharing proxy fraud.'}
+            </p>
+
+            <p className="text-[11px] font-mono text-cyan-400">
+              👉 Please scan the newest dynamic QR code currently displayed on the classroom screen.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsQrExpiredModalOpen(false);
+                setSubmitError('');
+              }}
+              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-xs font-mono shadow-[0_0_20px_rgba(6,182,212,0.4)] hover:shadow-[0_0_30px_rgba(6,182,212,0.6)] transition-all cursor-pointer"
+            >
+              Scan Latest QR Code
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* VERIFICATION RESULT MODAL */}
       {modalOpen && (

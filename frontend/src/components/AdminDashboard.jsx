@@ -1353,7 +1353,7 @@ export default function AdminDashboard() {
               <div className="w-full space-y-2 my-2">
                 <div className="flex items-center justify-between text-xs font-mono">
                   <span className="text-slate-400 flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5 text-cyan-400" /> Time Remaining (20s Grace Period Enabled)
+                    <Clock className="w-3.5 h-3.5 text-cyan-400" /> Time Remaining (10s Grace Period Enabled)
                   </span>
                   <span className={`font-bold text-sm ${safeCountdown <= 10 && isSessionActive ? 'text-rose-400 animate-pulse' : 'text-cyan-400'}`}>
                     {!isSessionActive ? 'PAUSED' : `${safeCountdown}s`}

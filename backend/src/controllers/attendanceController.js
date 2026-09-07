@@ -81,15 +81,15 @@ exports.verifyAttendance = async (req, res) => {
       return res.status(400).json({ success: false, errorType: 'MISSING_FIELDS', error: 'Student Name, Registration No, and Email are required.' });
     }
 
-    // 1. Decrypt & Validate Dynamic AES Token (Allow 180s grace for students filling out details)
+    // 1. Decrypt & Validate Dynamic AES Token (Strict 60s rotation + 10s grace period = 70s max window)
     let tokenPayload = null;
     try {
-      const decResult = decryptToken(token, 180);
+      const decResult = decryptToken(token, 70);
       if (!decResult || !decResult.isValid || !decResult.payload) {
         return res.status(400).json({
           success: false,
           errorType: 'EXPIRED_TOKEN',
-          error: decResult?.error || 'Dynamic QR token has expired or is invalid. Please scan the current live QR code on the projector.',
+          error: decResult?.error || 'Dynamic QR code has expired (60s validity + 10s grace limit exceeded). Please scan the current live QR code on the screen.',
         });
       }
       tokenPayload = decResult.payload;
@@ -97,7 +97,7 @@ exports.verifyAttendance = async (req, res) => {
       return res.status(400).json({
         success: false,
         errorType: 'EXPIRED_TOKEN',
-        error: 'Dynamic QR token has expired or is invalid. Please scan the current live QR code on the projector.',
+        error: 'Dynamic QR code has expired (60s validity + 10s grace limit exceeded). Please scan the current live QR code on the screen.',
       });
     }
 
@@ -265,6 +265,44 @@ exports.verifyAttendance = async (req, res) => {
         errorType: 'ALREADY_SUBMITTED',
         error: `Attendance already recorded for ${cleanRegNo} (${cleanEmail}) in this session.`,
       });
+    }
+
+    // 4.1 Anti-Proxy Lock: Verify Single Device Policy (Block device collision for different students)
+    if (deviceUuid && typeof deviceUuid === 'string' && !deviceUuid.includes('DEV-UNKNOWN')) {
+      let deviceCollision = null;
+      if (getIsConnected()) {
+        try {
+          deviceCollision = await Attendance.findOne({
+            sessionId: targetSessionId,
+            deviceUuid,
+            $or: [
+              { regNo: { $ne: cleanRegNo } },
+              { email: { $ne: cleanEmail } },
+            ],
+          });
+        } catch (e) {}
+      }
+
+      if (!deviceCollision) {
+        const storedAtt = storageService.getAttendanceBySession(targetSessionId);
+        deviceCollision = storedAtt.find(
+          (a) =>
+            a.deviceUuid === deviceUuid &&
+            ((a.regNo && a.regNo.toUpperCase() !== cleanRegNo) ||
+              (a.email && a.email.toLowerCase() !== cleanEmail))
+        );
+      }
+
+      if (deviceCollision) {
+        return res.status(403).json({
+          success: false,
+          errorType: 'ANTI_PROXY_DEVICE_LOCK',
+          error: `Anti-Proxy Lock: Multiple student submissions from the same device are prohibited. This device has already recorded attendance for ${deviceCollision.studentName || deviceCollision.regNo} (${deviceCollision.regNo}).`,
+          originalStudent: deviceCollision.studentName || deviceCollision.regNo,
+          originalRegNo: deviceCollision.regNo,
+          originalEmail: deviceCollision.email,
+        });
+      }
     }
 
     // Check Rapid IP / Device Proxy Sentinel
