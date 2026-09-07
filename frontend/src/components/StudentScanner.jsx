@@ -6,24 +6,16 @@ import {
   Hash,
   Send,
   RefreshCw,
-  Sparkles,
-  Lock,
   Mail,
-  ShieldCheck,
   BookOpen,
   GraduationCap,
   Phone,
   Pause,
-  Edit2,
-  Check,
-  LogOut,
   MapPin,
-  Radio,
   CheckCheck,
-  ShieldAlert,
   Clock,
   X,
-  ArrowRight,
+  Lock,
 } from 'lucide-react';
 import VerificationResultModal from './VerificationResultModal';
 import { useSocket } from '../context/SocketContext';
@@ -78,7 +70,7 @@ function GoogleGIcon() {
   );
 }
 
-// Helper to generate or retrieve persistent Device UUID (Anti-Proxy Lock)
+// Persistent Device UUID for single-device policy
 function getOrCreateDeviceUuid() {
   try {
     let uuid = localStorage.getItem('proxyqr_device_uuid');
@@ -96,8 +88,8 @@ function getOrCreateDeviceUuid() {
 export default function StudentScanner() {
   const { qrData, backendUrl, joinSession } = useSocket();
 
-  // Extract AES token and Session ID directly from URL query params
-  const [tokenFromUrl, setTokenFromUrl] = useState(() => {
+  // Extract token and session ID strictly from URL query params
+  const [tokenFromUrl] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('token') || '';
   });
@@ -109,30 +101,17 @@ export default function StudentScanner() {
 
   const deviceUuid = getOrCreateDeviceUuid();
 
-  // Google OAuth Student Identity State
-  const [googleStudent, setGoogleStudent] = useState(() => {
-    try {
-      const saved = localStorage.getItem('proxyqr_student_google');
-      return saved ? JSON.parse(saved) : null;
-    } catch (e) {
-      return null;
-    }
-  });
-
+  // Compulsory authentication on every scan: ALWAYS start null, do not auto-restore
+  const [googleStudent, setGoogleStudent] = useState(null);
   const [isOAuthLoading, setIsOAuthLoading] = useState(false);
   const [oauthError, setOauthError] = useState('');
 
-  // Anti-Proxy Top Pop-Up Modal State
-  const [isAntiProxyModalOpen, setIsAntiProxyModalOpen] = useState(false);
-  const [antiProxyModalData, setAntiProxyModalData] = useState(null);
+  // Token Timing State (70s max window from generation)
+  const [remainingSeconds, setRemainingSeconds] = useState(70);
+  const [isQrExpired, setIsQrExpired] = useState(false);
 
-  // Dynamic QR Expired Pop-Up Modal State
-  const [isQrExpiredModalOpen, setIsQrExpiredModalOpen] = useState(false);
-  const [qrExpiredMessage, setQrExpiredMessage] = useState('');
-
-  // Cached Profile State
-  const [isCachedProfile, setIsCachedProfile] = useState(false);
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  // Duplicate Submission Modal State (1 submission per device)
+  const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
 
   // Form Field States
   const [studentName, setStudentName] = useState('');
@@ -142,10 +121,9 @@ export default function StudentScanner() {
   const [branch, setBranch] = useState(DEPARTMENTS[0]);
   const [mobileNumber, setMobileNumber] = useState('');
 
-  // Geolocation & GPS Accuracy State
+  // Geolocation State
   const [userLocation, setUserLocation] = useState({ latitude: 28.6139, longitude: 77.2090 });
   const [gpsAccuracy, setGpsAccuracy] = useState(5);
-  const [gpsWarning, setGpsWarning] = useState('');
   const [isRefreshingGps, setIsRefreshingGps] = useState(false);
 
   // Submission & Result Modal State
@@ -158,17 +136,19 @@ export default function StudentScanner() {
   const [isAlreadyMarked, setIsAlreadyMarked] = useState(false);
   const [markedDetails, setMarkedDetails] = useState(null);
 
-  // Prioritize live rotating socket token (qrData.token) over static URL query param
-  const activeToken = qrData?.token || tokenFromUrl || '';
-  const currentSessionId = (sessionId || qrData?.sessionId || 'CS101-LECTURE').toUpperCase();
+  const currentSessionId = (sessionId || qrData?.sessionId || 'SESSION').toUpperCase();
   const isSessionTerminated = qrData?.status === 'TERMINATED';
   const isSessionPaused = qrData?.status === 'PAUSED';
-  const isSessionActive = qrData?.status === 'ACTIVE';
   const requireMobileNumber = qrData?.customFields?.requireMobileNumber === true;
 
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID;
 
-  // Join session socket room when sessionId is known
+  // Clear any cached authentication on mount so every scan requires fresh auth
+  useEffect(() => {
+    localStorage.removeItem('proxyqr_student_google');
+  }, []);
+
+  // Join session socket room
   useEffect(() => {
     if (currentSessionId && typeof joinSession === 'function') {
       joinSession(currentSessionId);
@@ -192,6 +172,55 @@ export default function StudentScanner() {
     } catch (e) {}
   }, [currentSessionId]);
 
+  // Query token status and start strict countdown for the scanned QR code
+  useEffect(() => {
+    if (!tokenFromUrl) {
+      setIsQrExpired(true);
+      return;
+    }
+
+    let isMounted = true;
+
+    // Check with server when token was generated
+    const checkToken = async () => {
+      try {
+        const { res, data } = await fetchWithFailover(
+          `/api/attendance/token-status?token=${encodeURIComponent(tokenFromUrl)}`
+        );
+        if (!isMounted) return;
+
+        if (data?.expired || !data?.valid || data?.remainingSeconds <= 0) {
+          setIsQrExpired(true);
+          setRemainingSeconds(0);
+        } else {
+          setRemainingSeconds(Math.max(0, data.remainingSeconds));
+          setIsQrExpired(false);
+        }
+      } catch (err) {
+        // Fallback to default 70s if network check fails
+        if (isMounted) setRemainingSeconds(70);
+      }
+    };
+
+    checkToken();
+
+    // 1-second countdown interval
+    const interval = setInterval(() => {
+      setRemainingSeconds((prev) => {
+        if (prev <= 1) {
+          setIsQrExpired(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [tokenFromUrl]);
+
   // Request High Accuracy Geolocation
   const requestGpsFix = () => {
     if ('geolocation' in navigator) {
@@ -202,18 +231,11 @@ export default function StudentScanner() {
             latitude: pos.coords.latitude,
             longitude: pos.coords.longitude,
           });
-          const acc = Math.round(pos.coords.accuracy || 5);
-          setGpsAccuracy(acc);
+          setGpsAccuracy(Math.round(pos.coords.accuracy || 5));
           setIsRefreshingGps(false);
-          if (acc > 60) {
-            setGpsWarning(`GPS accuracy is approx ±${acc}m. Toggle Wi-Fi ON to refine classroom triangulation.`);
-          } else {
-            setGpsWarning('');
-          }
         },
-        (err) => {
+        () => {
           setIsRefreshingGps(false);
-          setGpsWarning('GPS location permission denied or unavailable. Please enable Location in browser settings.');
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       );
@@ -224,7 +246,7 @@ export default function StudentScanner() {
     requestGpsFix();
   }, []);
 
-  // Calculate live Haversine Distance between student and classroom
+  // Calculate live Haversine Distance
   const calculateHaversine = (lat1, lon1, lat2, lon2) => {
     const toRad = (v) => (v * Math.PI) / 180;
     const R = 6371000;
@@ -260,13 +282,14 @@ export default function StudentScanner() {
   const effectiveBoundary = adminRadius + Math.min(gpsAccuracy, 30);
   const isInsideGeofence = !isGeofenceActive || isTargetPlaceholder || liveDistanceMeters <= effectiveBoundary;
 
-  // Universal Google Identity Services & OAuth 2.0 Token Client Initialization
+  // Initialize Google OAuth & Auto-Trigger Account Chooser
   useEffect(() => {
+    let client = null;
+
     const setupGoogleAuth = () => {
       try {
-        // 1. Modern OAuth 2.0 Token Client (Universal Native Google Account Chooser)
         if (window.google?.accounts?.oauth2) {
-          const client = window.google.accounts.oauth2.initTokenClient({
+          client = window.google.accounts.oauth2.initTokenClient({
             client_id: googleClientId,
             scope: 'email profile',
             callback: async (tokenResponse) => {
@@ -276,18 +299,16 @@ export default function StudentScanner() {
                   const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
                     headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
                   });
-                  const userProfile = await res.json();
-                  if (userProfile?.email) {
-                    setGoogleStudent(userProfile);
-                    setStudentEmail(userProfile.email);
-                    if (userProfile.name) {
-                      setStudentName((prev) => prev || userProfile.name);
+                  const profile = await res.json();
+                  if (profile?.email) {
+                    setGoogleStudent(profile);
+                    setStudentEmail(profile.email);
+                    if (profile.name) {
+                      setStudentName(profile.name);
                     }
-                    localStorage.setItem('proxyqr_student_google', JSON.stringify(userProfile));
                     setOauthError('');
                   }
                 } catch (e) {
-                  console.warn('Google userinfo fetch error:', e);
                   setOauthError('Failed to fetch Google profile. Please try again.');
                 } finally {
                   setIsOAuthLoading(false);
@@ -297,44 +318,18 @@ export default function StudentScanner() {
                 setOauthError('Google sign-in was cancelled or encountered an error.');
               }
             },
-            error_callback: (err) => {
-              console.warn('Google OAuth Token Client Error:', err);
+            error_callback: () => {
               setIsOAuthLoading(false);
             },
           });
           window._googleTokenClient = client;
-        }
 
-        // 2. Standard Google Sign-In (GSI) Button & ID Token Initializer
-        if (window.google?.accounts?.id) {
-          window.google.accounts.id.initialize({
-            client_id: googleClientId,
-            callback: handleGoogleCredentialResponse,
-            auto_select: false,
-          });
-
-          const btnDiv = document.getElementById('google-student-btn-container');
-          if (btnDiv) {
-            window.google.accounts.id.renderButton(btnDiv, {
-              theme: 'outline',
-              size: 'large',
-              width: '100%',
-              text: 'continue_with',
-              shape: 'pill',
-            });
+          // Auto-trigger Account Chooser immediately on scan
+          if (!googleStudent) {
+            try {
+              client.requestAccessToken({ prompt: 'select_account' });
+            } catch (e) {}
           }
-        }
-
-        // Auto-Trigger OAuth: If user is not yet signed in, prompt automatically
-        if (!googleStudent && !localStorage.getItem('proxyqr_student_google')) {
-          const timer = setTimeout(() => {
-            if (window.google?.accounts?.id) {
-              try {
-                window.google.accounts.id.prompt();
-              } catch (e) {}
-            }
-          }, 800);
-          return () => clearTimeout(timer);
         }
       } catch (err) {
         console.warn('Google Auth setup error:', err);
@@ -351,36 +346,9 @@ export default function StudentScanner() {
       script.onload = setupGoogleAuth;
       document.body.appendChild(script);
     }
-  }, [googleClientId, googleStudent]);
+  }, [googleClientId]);
 
-  // Handle Google OAuth Credential Response (ID Token)
-  const handleGoogleCredentialResponse = (response) => {
-    try {
-      const base64Url = response.credential.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const jsonPayload = decodeURIComponent(
-        atob(base64)
-          .split('')
-          .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-          .join('')
-      );
-
-      const parsed = JSON.parse(jsonPayload);
-      if (parsed?.email) {
-        setGoogleStudent(parsed);
-        setStudentEmail(parsed.email);
-        if (!studentName && parsed.name) {
-          setStudentName(parsed.name);
-        }
-        localStorage.setItem('proxyqr_student_google', JSON.stringify(parsed));
-        setOauthError('');
-      }
-    } catch (err) {
-      console.warn('Google Auth Credential Parse Error:', err);
-    }
-  };
-
-  // Universal Google Sign-In Click Trigger
+  // Manual Trigger for Google Sign-In button
   const handleGoogleSignInClick = () => {
     setOauthError('');
     setIsOAuthLoading(true);
@@ -389,80 +357,11 @@ export default function StudentScanner() {
       try {
         window._googleTokenClient.requestAccessToken({ prompt: 'select_account' });
         return;
-      } catch (e) {
-        console.warn('Token client request error:', e);
-      }
-    }
-
-    if (window.google?.accounts?.id) {
-      try {
-        window.google.accounts.id.prompt();
-        setIsOAuthLoading(false);
-        return;
       } catch (e) {}
     }
 
     setIsOAuthLoading(false);
-    setOauthError('Google Sign-In is initializing. Please tap "Continue with Google" again.');
-  };
-
-  const handleGoogleLogout = () => {
-    setGoogleStudent(null);
-    setStudentEmail('');
-    localStorage.removeItem('proxyqr_student_google');
-  };
-
-  // Load Saved Profile from localStorage
-  useEffect(() => {
-    try {
-      const savedProfile = localStorage.getItem('proxyqr_student_profile');
-      if (savedProfile) {
-        const parsed = JSON.parse(savedProfile);
-        if (parsed.regNo) {
-          setStudentName((prev) => prev || parsed.studentName || '');
-          setStudentEmail((prev) => prev || parsed.email || '');
-          setRegNo(parsed.regNo || '');
-          setYear(parsed.year || YEARS[0]);
-          setBranch(parsed.branch || DEPARTMENTS[0]);
-          setMobileNumber(parsed.mobileNumber || '');
-          setIsCachedProfile(true);
-        }
-      }
-    } catch (e) {}
-  }, []);
-
-  // Sync Google Student Email to Form
-  useEffect(() => {
-    if (googleStudent?.email) {
-      setStudentEmail(googleStudent.email);
-      if (!studentName && googleStudent.name) {
-        setStudentName(googleStudent.name);
-      }
-    }
-  }, [googleStudent]);
-
-  // Update session ID if available in socket qrData
-  useEffect(() => {
-    if (qrData?.sessionId && !sessionId) {
-      setSessionId(qrData.sessionId);
-    }
-  }, [qrData, sessionId]);
-
-  // Anti-Proxy Device Lock Check
-  const checkAntiProxyDeviceLock = (inputRegNo, inputEmail) => {
-    try {
-      const submittedDeviceHistory = localStorage.getItem('proxyqr_device_submissions');
-      if (submittedDeviceHistory) {
-        const history = JSON.parse(submittedDeviceHistory);
-        const matchForSession = history.find(
-          (h) => h.sessionId === currentSessionId && (h.regNo !== inputRegNo || h.email !== inputEmail)
-        );
-        if (matchForSession) {
-          return matchForSession; // Found existing submission for a DIFFERENT student on this device!
-        }
-      }
-    } catch (e) {}
-    return null;
+    setOauthError('Google Sign-In is initializing. Please tap "Sign in with Google" again.');
   };
 
   // Submit Attendance Handler
@@ -470,13 +369,18 @@ export default function StudentScanner() {
     e.preventDefault();
     setSubmitError('');
 
+    if (isQrExpired || remainingSeconds <= 0) {
+      setIsQrExpired(true);
+      return;
+    }
+
     if (!googleStudent) {
-      setSubmitError('Authentication required: Please complete Step 1 (Google Sign-In) first.');
+      setSubmitError('Please sign in with Google first.');
       return;
     }
 
     if (!studentName.trim() || !regNo.trim() || !studentEmail.trim()) {
-      setSubmitError('Please complete Name, PRN / Registration No, and Email fields.');
+      setSubmitError('Please complete Name, Registration Number, and Email fields.');
       return;
     }
 
@@ -485,33 +389,30 @@ export default function StudentScanner() {
       return;
     }
 
-    if (!activeToken) {
-      setSubmitError('No active QR security token found. Please scan the current projector QR code.');
+    if (!tokenFromUrl) {
+      setSubmitError('No active QR code token found. Please scan the current QR code on the screen.');
       return;
     }
 
     const cleanRegNo = regNo.trim().toUpperCase();
     const cleanEmail = studentEmail.trim().toLowerCase();
 
-    // Check Client-Side Anti-Proxy Device Lock
-    const existingSubmission = checkAntiProxyDeviceLock(cleanRegNo, cleanEmail);
-    if (existingSubmission) {
-      setAntiProxyModalData({
-        originalStudent: existingSubmission.studentName || existingSubmission.regNo,
-        originalRegNo: existingSubmission.regNo,
-        originalEmail: existingSubmission.email,
-        currentRegNo: cleanRegNo,
-        sessionId: currentSessionId,
-      });
-      setIsAntiProxyModalOpen(true);
-      setSubmitError('Anti-Proxy Lock: Multiple student submissions from the same device are prohibited.');
-      return;
-    }
+    // Check Client-Side Device Lock
+    try {
+      const history = JSON.parse(localStorage.getItem('proxyqr_device_submissions') || '[]');
+      const match = history.find(
+        (h) => h.sessionId === currentSessionId && (h.regNo !== cleanRegNo || h.email !== cleanEmail)
+      );
+      if (match) {
+        setIsDuplicateModalOpen(true);
+        return;
+      }
+    } catch (e) {}
 
     setIsSubmitting(true);
 
     const payload = {
-      token: activeToken,
+      token: tokenFromUrl,
       studentId: cleanRegNo,
       regNo: cleanRegNo,
       studentName: studentName.trim(),
@@ -535,18 +436,7 @@ export default function StudentScanner() {
       setIsSubmitting(false);
 
       if (res.ok && data?.success) {
-        // Save Profile for 1-Tap Future Submissions
-        const profile = {
-          studentName: studentName.trim(),
-          email: cleanEmail,
-          regNo: cleanRegNo,
-          year,
-          branch,
-          mobileNumber: mobileNumber.trim(),
-        };
-        localStorage.setItem('proxyqr_student_profile', JSON.stringify(profile));
-
-        // Save Device Submission History
+        // Save Device Submission Record
         try {
           const existing = JSON.parse(localStorage.getItem('proxyqr_device_submissions') || '[]');
           const newEntry = {
@@ -564,7 +454,7 @@ export default function StudentScanner() {
 
         setVerificationResult({
           success: true,
-          message: data.message || 'Attendance verified and marked successfully!',
+          message: data.message || 'Attendance marked successfully!',
           data: data.data || {
             user: cleanRegNo,
             userName: studentName.trim(),
@@ -572,7 +462,6 @@ export default function StudentScanner() {
             sessionTitle: qrData?.title || currentSessionId,
             distanceMeters: data.attendance?.distanceFromTargetMeters ?? liveDistanceMeters,
             allowedRadiusMeters: data.attendance?.allowedRadiusMeters ?? effectiveBoundary,
-            tokenAgeSeconds: 0,
             timestamp: data.attendance?.timestamp || new Date(),
           },
           attendance: data.attendance,
@@ -582,26 +471,13 @@ export default function StudentScanner() {
         const errMsg = data?.error || data?.message || 'Attendance verification failed.';
         setSubmitError(errMsg);
 
-        // Check for Specific Anti-Proxy Violation from Server
         if (data?.errorType === 'ANTI_PROXY_DEVICE_LOCK') {
-          setAntiProxyModalData({
-            originalStudent: data.originalStudent || 'Another Student',
-            originalRegNo: data.originalRegNo || '',
-            originalEmail: data.originalEmail || '',
-            currentRegNo: cleanRegNo,
-            sessionId: currentSessionId,
-          });
-          setIsAntiProxyModalOpen(true);
+          setIsDuplicateModalOpen(true);
           return;
         }
 
-        // Check for Dynamic QR Expired Token
         if (data?.errorType === 'EXPIRED_TOKEN') {
-          setQrExpiredMessage(
-            data.error ||
-              'Dynamic QR code has expired (60s interval + 10s grace period exceeded). Please scan the current live QR code from the projector screen.'
-          );
-          setIsQrExpiredModalOpen(true);
+          setIsQrExpired(true);
           return;
         }
 
@@ -629,24 +505,19 @@ export default function StudentScanner() {
 
   return (
     <div className="min-h-[90vh] flex flex-col items-center justify-between px-4 py-6 relative select-none font-sans bg-transparent">
-      <div className="w-full max-w-md space-y-4 animate-fadeIn">
+      <div className="w-full max-w-md space-y-4">
         {/* SESSION HEADER CARD */}
-        <div className="glass-panel p-5 rounded-3xl space-y-3 text-center border-b-4 border-b-cyan-500 shadow-[0_0_40px_rgba(6,182,212,0.15)]">
-          <div className="inline-flex items-center gap-2 text-xs font-mono font-bold text-cyan-400 uppercase tracking-wider">
-            <ShieldCheck className="w-4 h-4" />
-            <span>ProxyQr Student Intake</span>
-          </div>
-
-          <h2 className="font-display font-extrabold text-xl sm:text-2xl text-white">
-            {qrData?.title || 'Attendance Verification'}
+        <div className="glass-panel p-5 rounded-3xl space-y-2 text-center border border-slate-800 shadow-lg">
+          <h2 className="font-display font-bold text-xl sm:text-2xl text-white">
+            {qrData?.title || 'Attendance'}
           </h2>
 
-          <div className="flex flex-wrap items-center justify-center gap-2 text-xs font-mono text-slate-300">
-            <span className="px-2.5 py-1 rounded-lg bg-slate-900/90 border border-slate-800 text-cyan-300 font-bold">
-              ID: {currentSessionId}
+          <div className="flex items-center justify-center gap-2 text-xs font-mono text-slate-300">
+            <span className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 font-semibold">
+              {currentSessionId}
             </span>
             {qrData?.labIdentifier && (
-              <span className="px-2.5 py-1 rounded-lg bg-slate-900/90 border border-slate-800 text-slate-300">
+              <span className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">
                 {qrData.labIdentifier}
               </span>
             )}
@@ -659,281 +530,134 @@ export default function StudentScanner() {
                   : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
               }`}
             >
-              {isSessionTerminated ? 'TERMINATED' : isSessionPaused ? 'PAUSED' : 'LIVE'}
+              {isSessionTerminated ? 'CLOSED' : isSessionPaused ? 'PAUSED' : 'ACTIVE'}
             </span>
           </div>
         </div>
 
         {/* ALREADY SUBMITTED BANNER */}
         {isAlreadyMarked && (
-          <div className="p-4 rounded-3xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 text-xs font-mono space-y-2 animate-fadeIn shadow-[0_0_30px_rgba(16,185,129,0.15)]">
+          <div className="p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 text-xs space-y-2">
             <div className="flex items-center gap-2 font-bold text-sm text-emerald-300">
               <CheckCheck className="w-5 h-5 text-emerald-400 flex-shrink-0" />
-              <span>Attendance Recorded</span>
+              <span>Attendance Already Marked</span>
             </div>
-            <p className="text-[11px] text-emerald-300/80 leading-relaxed">
-              Your attendance was marked for PRN <strong className="text-white">{markedDetails?.regNo || regNo}</strong>.
+            <p className="text-[12px] text-emerald-300/90">
+              Your attendance was recorded for <strong>{markedDetails?.regNo || regNo}</strong>.
             </p>
-            <button
-              type="button"
-              onClick={() => {
-                setVerificationResult({
-                  success: true,
-                  message: 'Attendance verified and recorded.',
-                  data: {
-                    user: markedDetails?.regNo || regNo,
-                    userName: markedDetails?.studentName || studentName,
-                    event: qrData?.title || currentSessionId,
-                    sessionTitle: qrData?.title || currentSessionId,
-                    distanceMeters: liveDistanceMeters,
-                    allowedRadiusMeters: effectiveBoundary,
-                    timestamp: markedDetails?.timestamp || Date.now(),
-                  },
-                });
-                setModalOpen(true);
-              }}
-              className="w-full py-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/40 font-bold transition-all text-xs cursor-pointer"
-            >
-              View Verification Receipt
-            </button>
           </div>
         )}
 
-        {/* PAUSED OR TERMINATED SESSION NOTICE */}
+        {/* PAUSED OR TERMINATED NOTICE */}
         {isSessionTerminated && (
-          <div className="p-4 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs font-mono flex items-center gap-3">
+          <div className="p-4 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-200 text-xs flex items-center gap-3">
             <Pause className="w-5 h-5 text-rose-400 flex-shrink-0" />
             <div>
-              <div className="font-bold">SESSION PERMANENTLY CLOSED</div>
-              <div className="text-[11px] text-rose-300/80">
-                This attendance session has ended. Submissions are no longer accepted.
-              </div>
+              <div className="font-bold">Session Closed</div>
+              <div className="text-[11px] text-rose-300/80">This attendance session has ended.</div>
             </div>
           </div>
         )}
 
         {isSessionPaused && !isSessionTerminated && (
-          <div className="p-4 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs font-mono flex items-center gap-3 animate-pulse">
+          <div className="p-4 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs flex items-center gap-3">
             <Pause className="w-5 h-5 text-amber-400 flex-shrink-0" />
             <div>
-              <div className="font-bold">SESSION CURRENTLY PAUSED</div>
-              <div className="text-[11px] text-amber-300/80">Wait for the instructor to resume the session QR rotation.</div>
+              <div className="font-bold">Session Paused</div>
+              <div className="text-[11px] text-amber-300/80">Please wait for the instructor to resume.</div>
             </div>
           </div>
         )}
 
         {/* SUBMIT ERROR ALERT */}
         {submitError && (
-          <div className="p-4 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-mono flex items-start gap-2.5 animate-fadeIn">
+          <div className="p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs flex items-start gap-2.5">
             <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
             <span>{submitError}</span>
           </div>
         )}
 
         {/* ========================================================================= */}
-        {/* STEP 1: GOOGLE OAUTH 2.0 AUTHENTICATION GATE (RENDERED WHEN NOT LOGGED IN) */}
+        {/* STEP 1: GOOGLE AUTHENTICATION (PHOTO 1 -> PHOTO 2 DIRECT TRIGGER)         */}
         {/* ========================================================================= */}
         {!googleStudent ? (
-          <div className="glass-panel p-6 rounded-3xl space-y-5 border-2 border-cyan-500/40 shadow-[0_0_40px_rgba(6,182,212,0.2)] animate-fadeIn text-center">
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold uppercase tracking-wider">
-                <Lock className="w-3.5 h-3.5" />
-                <span>Step 1 of 2: Authenticate Identity</span>
-              </div>
-              <h3 className="font-display font-extrabold text-2xl text-white">
-                Google Sign-In Required
+          <div className="glass-panel p-6 rounded-3xl space-y-4 border border-slate-800 text-center">
+            <div className="space-y-1.5">
+              <h3 className="font-display font-bold text-xl text-white">
+                Sign in with Google
               </h3>
-              <p className="text-xs font-mono text-slate-300 max-w-sm mx-auto leading-relaxed">
-                To guarantee zero-proxy verification, you must sign in with your college or personal Google account before filling out attendance details.
+              <p className="text-xs text-slate-400">
+                Please authenticate using your Google account to mark attendance.
               </p>
             </div>
 
             {oauthError && (
-              <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-mono flex items-start gap-2 text-left">
-                <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
-                <span>{oauthError}</span>
+              <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs text-left">
+                {oauthError}
               </div>
             )}
 
-            <div className="space-y-3 py-2">
-              <div id="google-student-btn-container" className="w-full flex justify-center min-h-[44px]"></div>
-
-              <button
-                type="button"
-                disabled={isOAuthLoading}
-                onClick={handleGoogleSignInClick}
-                className="w-full py-3.5 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-display font-bold text-sm flex items-center justify-center gap-3 shadow-[0_0_25px_rgba(255,255,255,0.25)] hover:shadow-[0_0_35px_rgba(255,255,255,0.4)] transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50"
-              >
-                {isOAuthLoading ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin text-slate-900" />
-                    <span>Connecting to Google...</span>
-                  </>
-                ) : (
-                  <>
-                    <GoogleGIcon />
-                    <span>Continue with Google</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Anti-Proxy Notice Below OAuth */}
-            <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 text-left space-y-1.5 text-xs font-mono">
-              <div className="flex items-center gap-2 text-amber-400 font-bold text-[11px]">
-                <ShieldCheck className="w-4 h-4 flex-shrink-0" />
-                <span>Anti-Proxy Sentinel Protection</span>
-              </div>
-              <p className="text-[11px] text-slate-400 leading-relaxed">
-                Each student must authenticate from their own personal device. One submission per device is enforced for this session.
-              </p>
-            </div>
+            <button
+              type="button"
+              disabled={isOAuthLoading}
+              onClick={handleGoogleSignInClick}
+              className="w-full py-3.5 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-bold text-sm flex items-center justify-center gap-3 shadow-md transition-all active:scale-[0.98] cursor-pointer disabled:opacity-50"
+            >
+              {isOAuthLoading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-slate-900" />
+                  <span>Connecting to Google...</span>
+                </>
+              ) : (
+                <>
+                  <GoogleGIcon />
+                  <span>Sign in with Google</span>
+                </>
+              )}
+            </button>
           </div>
         ) : (
           /* ========================================================================= */
-          /* STEP 2: ATTENDANCE INTAKE FORM (RENDERED ONCE GOOGLE AUTHENTICATION IS OK) */
+          /* STEP 2: MINIMAL INTAKE FORM (COMPONENTS STREAMLINED & ABSTRACTED)        */
           /* ========================================================================= */
-          <div className="space-y-4 animate-fadeIn">
-            {/* Authenticated Identity Header Pill */}
-            <div className="glass-panel p-4 rounded-3xl border border-emerald-500/40 bg-emerald-500/5 flex items-center justify-between text-xs font-mono">
-              <div className="flex items-center gap-3">
-                {googleStudent.picture ? (
-                  <img
-                    src={googleStudent.picture}
-                    alt={googleStudent.name || 'Student'}
-                    className="w-10 h-10 rounded-full border-2 border-emerald-400 object-cover shadow-sm"
-                  />
-                ) : (
-                  <div className="w-10 h-10 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold flex items-center justify-center text-sm">
-                    {(googleStudent.name || googleStudent.email || 'S').charAt(0).toUpperCase()}
-                  </div>
-                )}
-                <div>
-                  <div className="flex items-center gap-1.5 font-bold text-white text-sm">
-                    <span>{googleStudent.name || studentName || 'Authenticated Student'}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                      VERIFIED
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-emerald-300/90 font-mono">
-                    {googleStudent.email}
-                  </div>
-                </div>
-              </div>
+          <div className="space-y-4">
+            {/* Real-time Countdown Banner */}
+            <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-900 border border-slate-800 text-xs font-mono">
+              <span className="flex items-center gap-1.5 text-slate-400">
+                <Clock className="w-4 h-4 text-cyan-400" />
+                <span>Time remaining:</span>
+              </span>
+              <span className={`font-bold text-sm ${remainingSeconds <= 15 ? 'text-rose-400 animate-pulse' : 'text-cyan-400'}`}>
+                {remainingSeconds}s
+              </span>
+            </div>
 
-              <button
-                type="button"
-                onClick={handleGoogleLogout}
-                className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 border border-slate-800 transition-colors"
-                title="Switch Google Account"
+            {/* Simple Proximity Card */}
+            <div className="glass-panel p-3.5 rounded-2xl border border-slate-800 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2 text-slate-300">
+                <MapPin className="w-4 h-4 text-cyan-400" />
+                <span>Location:</span>
+                <span className="font-semibold text-white">
+                  {!isGeofenceActive
+                    ? 'Bypassed'
+                    : isTargetPlaceholder
+                    ? 'Classroom'
+                    : `~${liveDistanceMeters}m`}
+                </span>
+              </div>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
+                  isInsideGeofence
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                    : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                }`}
               >
-                <LogOut className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* GEOFENCE & GPS ACCURACY CARD */}
-            <div className="glass-panel p-4 rounded-3xl space-y-2.5 border border-slate-800 text-xs font-mono">
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 font-bold text-slate-300">
-                  <MapPin className="w-3.5 h-3.5 text-cyan-400" /> Classroom Proximity
-                </span>
-                <button
-                  type="button"
-                  onClick={requestGpsFix}
-                  disabled={isRefreshingGps}
-                  className="flex items-center gap-1 text-[11px] text-cyan-400 hover:text-cyan-300 transition-colors cursor-pointer"
-                  title="Calibrate GPS Triangulation"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isRefreshingGps ? 'animate-spin' : ''}`} />
-                  <span>Calibrate GPS</span>
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900/80 border border-slate-800">
-                <div>
-                  <div className="text-[10px] text-slate-400">ESTIMATED DISTANCE</div>
-                  <div className={`font-display font-bold text-sm ${isInsideGeofence ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {!isGeofenceActive
-                      ? 'Bypassed (Anywhere)'
-                      : isTargetPlaceholder
-                      ? 'Auto-Anchored'
-                      : `~${liveDistanceMeters}m away`}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-[10px] text-slate-400">ALLOWED BOUNDARY</div>
-                  <div className="font-bold text-slate-200 text-sm">
-                    {!isGeofenceActive
-                      ? 'Universal'
-                      : isTargetPlaceholder
-                      ? 'Classroom Sync'
-                      : `${effectiveBoundary}m max`}
-                  </div>
-                </div>
-                <div>
-                  <span
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                      !isGeofenceActive
-                        ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'
-                        : isInsideGeofence
-                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                        : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                    }`}
-                  >
-                    {!isGeofenceActive
-                      ? 'GEOFENCE OFF'
-                      : isInsideGeofence
-                      ? 'IN RANGE'
-                      : 'CHECK RANGE'}
-                  </span>
-                </div>
-              </div>
-
-              {gpsWarning && (
-                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] flex items-start gap-2">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
-                  <span>{gpsWarning}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Anti-Proxy Device Status Notice */}
-            <div className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800 text-xs font-mono flex items-center justify-between">
-              <span className="text-slate-400 flex items-center gap-1.5 text-[11px]">
-                <Lock className="w-3.5 h-3.5 text-cyan-400" /> Anti-Proxy Device Sentinel
-              </span>
-              <span className="text-[10px] font-bold text-cyan-300 px-2.5 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/20">
-                1 SUBMISSION / DEVICE
+                {isInsideGeofence ? 'In Range' : 'Out of Range'}
               </span>
             </div>
 
-            {/* CACHED PROFILE (1-TAP MODE) TOGGLE */}
-            {isCachedProfile && (
-              <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-between text-xs font-mono">
-                <div className="flex items-center gap-2 text-emerald-400 font-semibold">
-                  <Check className="w-4 h-4" />
-                  <span>Profile Loaded (1-Tap Mode)</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsEditingProfile(!isEditingProfile)}
-                  className="text-cyan-400 hover:underline text-[11px] flex items-center gap-1 cursor-pointer"
-                >
-                  <Edit2 className="w-3 h-3" />
-                  <span>{isEditingProfile ? 'Lock Details' : 'Edit Details'}</span>
-                </button>
-              </div>
-            )}
-
-            {/* STUDENT INTAKE FORM */}
-            <form onSubmit={handleSubmitAttendance} className="glass-panel p-6 rounded-3xl space-y-4 border border-slate-800 text-xs font-mono">
-              <div className="flex items-center justify-between pb-1 border-b border-slate-800 text-slate-400 text-[11px]">
-                <span>Step 2 of 2: Confirm Details</span>
-                <span className="text-cyan-400 flex items-center gap-1">
-                  <Clock className="w-3 h-3" /> 60s QR + 10s Grace
-                </span>
-              </div>
-
+            {/* Student Intake Form */}
+            <form onSubmit={handleSubmitAttendance} className="glass-panel p-6 rounded-3xl space-y-4 border border-slate-800 text-xs">
               <div className="space-y-1.5">
                 <label className="text-slate-300 font-semibold flex items-center gap-1.5">
                   <User className="w-3.5 h-3.5 text-cyan-400" />
@@ -943,12 +667,9 @@ export default function StudentScanner() {
                   type="text"
                   value={studentName}
                   onChange={(e) => setStudentName(e.target.value)}
-                  placeholder="e.g. Aryan Kale"
-                  readOnly={isCachedProfile && !isEditingProfile}
+                  placeholder="Your Full Name"
                   required
-                  className={`w-full px-4 py-3 rounded-xl glass-input text-slate-200 font-sans text-sm ${
-                    isCachedProfile && !isEditingProfile ? 'bg-slate-900/60 border-slate-800 cursor-not-allowed' : ''
-                  }`}
+                  className="w-full px-4 py-3 rounded-xl glass-input text-slate-100 text-sm"
                 />
               </div>
 
@@ -962,29 +683,23 @@ export default function StudentScanner() {
                   value={regNo}
                   onChange={(e) => setRegNo(e.target.value.toUpperCase())}
                   placeholder="e.g. 2024BIT020"
-                  readOnly={isCachedProfile && !isEditingProfile}
                   required
-                  className={`w-full px-4 py-3 rounded-xl glass-input text-cyan-300 font-mono font-bold text-sm ${
-                    isCachedProfile && !isEditingProfile ? 'bg-slate-900/60 border-slate-800 cursor-not-allowed' : ''
-                  }`}
+                  className="w-full px-4 py-3 rounded-xl glass-input text-cyan-300 font-mono font-bold text-sm"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-slate-300 font-semibold flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-slate-300">
-                    <Mail className="w-3.5 h-3.5 text-cyan-400" /> Google Verified Email
-                  </span>
-                  <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> LOCKED
-                  </span>
+                <label className="text-slate-300 font-semibold flex items-center gap-1.5">
+                  <Mail className="w-3.5 h-3.5 text-cyan-400" />
+                  Email
                 </label>
                 <input
                   type="email"
                   value={studentEmail}
                   readOnly
+                  disabled
                   required
-                  className="w-full px-4 py-3 rounded-xl glass-input font-sans text-sm bg-slate-900/90 text-emerald-300 border-emerald-500/40 cursor-not-allowed font-semibold"
+                  className="w-full px-4 py-3 rounded-xl glass-input text-slate-300 text-sm bg-slate-900/80 cursor-not-allowed border-slate-800 font-medium"
                 />
               </div>
 
@@ -997,7 +712,6 @@ export default function StudentScanner() {
                   <select
                     value={year}
                     onChange={(e) => setYear(e.target.value)}
-                    disabled={isCachedProfile && !isEditingProfile}
                     className="w-full px-3 py-3 rounded-xl glass-input text-slate-200"
                   >
                     {YEARS.map((yr) => (
@@ -1011,12 +725,11 @@ export default function StudentScanner() {
                 <div className="space-y-1.5">
                   <label className="text-slate-300 font-semibold flex items-center gap-1.5">
                     <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
-                    Branch / Major
+                    Department
                   </label>
                   <select
                     value={branch}
                     onChange={(e) => setBranch(e.target.value)}
-                    disabled={isCachedProfile && !isEditingProfile}
                     className="w-full px-3 py-3 rounded-xl glass-input text-slate-200"
                   >
                     {DEPARTMENTS.map((dept) => (
@@ -1032,45 +745,34 @@ export default function StudentScanner() {
                 <div className="space-y-1.5">
                   <label className="text-slate-300 font-semibold flex items-center gap-1.5">
                     <Phone className="w-3.5 h-3.5 text-cyan-400" />
-                    Mobile Phone Number
+                    Mobile Number
                   </label>
                   <input
                     type="tel"
                     value={mobileNumber}
                     onChange={(e) => setMobileNumber(e.target.value)}
                     placeholder="9876543210"
-                    readOnly={isCachedProfile && !isEditingProfile}
                     required={requireMobileNumber}
                     className="w-full px-4 py-3 rounded-xl glass-input text-slate-200"
                   />
                 </div>
               )}
 
-              {/* ATTENDANCE CONFIRMATION BUTTON */}
+              {/* Submit Attendance Button */}
               <button
                 type="submit"
-                disabled={isSubmitting || isSessionPaused || isSessionTerminated || !activeToken}
-                className="w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 text-white font-display font-extrabold text-sm shadow-[0_0_25px_rgba(6,182,212,0.4)] hover:shadow-[0_0_35px_rgba(6,182,212,0.6)] transition-all active:scale-[0.99] disabled:opacity-40 flex items-center justify-center gap-2 cursor-pointer mt-4"
+                disabled={isSubmitting || isSessionPaused || isSessionTerminated || isQrExpired}
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-sm shadow-md transition-all active:scale-[0.99] disabled:opacity-40 flex items-center justify-center gap-2 cursor-pointer mt-4"
               >
                 {isSubmitting ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Verifying GPS & Security Token...</span>
-                  </>
-                ) : isAlreadyMarked ? (
-                  <>
-                    <CheckCheck className="w-4 h-4 text-emerald-300" />
-                    <span>Update / Re-Confirm Attendance</span>
-                  </>
-                ) : isCachedProfile && !isEditingProfile ? (
-                  <>
-                    <Send className="w-4 h-4" />
-                    <span>1-Tap Confirm Attendance ({studentName || regNo})</span>
+                    <span>Verifying...</span>
                   </>
                 ) : (
                   <>
                     <Send className="w-4 h-4" />
-                    <span>Confirm & Mark Attendance</span>
+                    <span>Mark Attendance</span>
                   </>
                 )}
               </button>
@@ -1079,161 +781,73 @@ export default function StudentScanner() {
         )}
       </div>
 
-      <footer className="pt-6 text-center text-[11px] font-mono text-slate-400">
-        <span>ProxyQr Sentinel • Dynamic Anti-Proxy Verification</span>
-      </footer>
-
       {/* ========================================================================= */}
-      {/* ANTI-PROXY LOCK TOP POPUP MODAL (TRIGGERED WHEN ATTEMPTING FOR ANOTHER)  */}
+      {/* 1 SUBMISSION PER DEVICE POPUP MODAL                                       */}
       {/* ========================================================================= */}
-      {isAntiProxyModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-start justify-center p-4 pt-12 sm:pt-16 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
-          <div className="relative w-full max-w-md glass-panel p-6 rounded-3xl border-2 border-rose-500/60 shadow-[0_0_50px_rgba(244,63,94,0.4)] space-y-4 animate-slideDown">
-            {/* Close Button */}
+      {isDuplicateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="relative w-full max-w-sm glass-panel p-6 rounded-3xl border border-slate-700 shadow-xl space-y-4 text-center">
             <button
               type="button"
-              onClick={() => setIsAntiProxyModalOpen(false)}
-              className="absolute top-4 right-4 p-2 rounded-full bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              onClick={() => setIsDuplicateModalOpen(false)}
+              className="absolute top-4 right-4 p-1.5 rounded-full bg-slate-900 text-slate-400 hover:text-white"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
 
-            <div className="text-center space-y-2">
-              <div className="inline-flex p-3.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/40 shadow-[0_0_25px_rgba(244,63,94,0.4)] animate-pulse">
-                <ShieldAlert className="w-10 h-10" />
-              </div>
-              <h3 className="font-display text-xl sm:text-2xl font-black text-white">
-                ANTI-PROXY LOCK ACTIVATED
-              </h3>
-              <span className="inline-block text-[11px] font-mono font-bold px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 uppercase">
-                Single-Device Policy Violation
-              </span>
+            <div className="inline-flex p-3 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30">
+              <Lock className="w-8 h-8" />
             </div>
 
-            <div className="bg-slate-950/90 p-4 rounded-2xl border border-rose-500/30 space-y-2.5 text-xs font-mono">
-              <p className="text-rose-200 leading-relaxed">
-                You cannot mark attendance for another student. This smartphone is already locked to a previously recorded student for this session:
-              </p>
-              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1 text-slate-300 text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Session ID:</span>
-                  <span className="text-cyan-400 font-bold">{antiProxyModalData?.sessionId || currentSessionId}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Registered Student:</span>
-                  <span className="text-emerald-400 font-bold">
-                    {antiProxyModalData?.originalStudent || antiProxyModalData?.originalRegNo || 'Existing Attendee'}
-                  </span>
-                </div>
-                {antiProxyModalData?.originalRegNo && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Registered PRN:</span>
-                    <span className="text-white font-bold">{antiProxyModalData.originalRegNo}</span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Attempted PRN:</span>
-                  <span className="text-rose-400 font-bold">{antiProxyModalData?.currentRegNo || regNo}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Device Sentinel:</span>
-                  <span className="text-slate-400 text-[10px] truncate max-w-[180px]">{deviceUuid}</span>
-                </div>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Each student must scan the QR code and verify attendance from their own personal smartphone.
-              </p>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setIsAntiProxyModalOpen(false)}
-                className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs font-mono transition-colors"
-              >
-                I Understand & Close
-              </button>
-              {isAlreadyMarked && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAntiProxyModalOpen(false);
-                    setVerificationResult({
-                      success: true,
-                      message: 'Viewing your recorded attendance.',
-                      data: {
-                        user: markedDetails?.regNo || regNo,
-                        userName: markedDetails?.studentName || studentName,
-                        event: qrData?.title || currentSessionId,
-                        sessionTitle: qrData?.title || currentSessionId,
-                        distanceMeters: liveDistanceMeters,
-                        allowedRadiusMeters: effectiveBoundary,
-                        timestamp: markedDetails?.timestamp || Date.now(),
-                      },
-                    });
-                    setModalOpen(true);
-                  }}
-                  className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs font-mono transition-colors"
-                >
-                  View Receipt
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* DYNAMIC QR EXPIRED POPUP MODAL (TRIGGERED WHEN TOKEN EXCEEDS 60s+10s GRACE)*/}
-      {/* ========================================================================= */}
-      {isQrExpiredModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
-          <div className="relative w-full max-w-md glass-panel p-6 rounded-3xl border-2 border-amber-500/60 shadow-[0_0_50px_rgba(245,158,11,0.3)] space-y-4 text-center animate-scaleUp">
-            {/* Close Button */}
-            <button
-              type="button"
-              onClick={() => setIsQrExpiredModalOpen(false)}
-              className="absolute top-4 right-4 p-2 rounded-full bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="inline-flex p-3.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-[0_0_25px_rgba(245,158,11,0.3)] animate-pulse">
-              <Clock className="w-10 h-10" />
-            </div>
-
-            <h3 className="font-display text-xl sm:text-2xl font-black text-white">
-              DYNAMIC QR CODE EXPIRED
+            <h3 className="font-display text-lg font-bold text-white">
+              One submission per device allowed
             </h3>
 
-            <span className="inline-block text-[11px] font-mono font-bold px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase">
-              Time Window Exceeded (60s + 10s Grace)
-            </span>
-
-            <p className="text-xs font-mono text-slate-300 leading-relaxed bg-slate-950/80 p-3.5 rounded-2xl border border-slate-800">
-              {qrExpiredMessage ||
-                'The security token for this QR code has expired. Attendance must be marked within 60 seconds (with a 10s grace period) of generation to prevent photo-sharing proxy fraud.'}
-            </p>
-
-            <p className="text-[11px] font-mono text-cyan-400">
-              👉 Please scan the newest dynamic QR code currently displayed on the classroom screen.
+            <p className="text-xs text-slate-300 leading-relaxed">
+              This device has already recorded attendance for this session. Each student must mark attendance from their own device.
             </p>
 
             <button
               type="button"
-              onClick={() => {
-                setIsQrExpiredModalOpen(false);
-                setSubmitError('');
-              }}
-              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-xs font-mono shadow-[0_0_20px_rgba(6,182,212,0.4)] hover:shadow-[0_0_30px_rgba(6,182,212,0.6)] transition-all cursor-pointer"
+              onClick={() => setIsDuplicateModalOpen(false)}
+              className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition-colors"
             >
-              Scan Latest QR Code
+              Close
             </button>
           </div>
         </div>
       )}
 
-      {/* VERIFICATION RESULT MODAL */}
+      {/* ========================================================================= */}
+      {/* QR CODE EXPIRED POPUP MODAL                                               */}
+      {/* ========================================================================= */}
+      {isQrExpired && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="relative w-full max-w-sm glass-panel p-6 rounded-3xl border border-amber-500/40 shadow-xl space-y-4 text-center">
+            <div className="inline-flex p-3 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+              <Clock className="w-8 h-8" />
+            </div>
+
+            <h3 className="font-display text-lg font-bold text-white">
+              QR Code Expired
+            </h3>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              The time to mark attendance for this QR code has expired. Please scan the current QR code on the screen.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="w-full py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs transition-colors cursor-pointer"
+            >
+              Scan Again
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* VERIFICATION RECEIPT MODAL */}
       {modalOpen && (
         <VerificationResultModal
           isOpen={modalOpen}

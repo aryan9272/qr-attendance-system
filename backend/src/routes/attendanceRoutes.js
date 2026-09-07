@@ -5,6 +5,8 @@ const { verifyAdminToken } = require('../middleware/authMiddleware');
 
 // Public Student & Session Status Endpoints
 router.post('/verify', attendanceController.verifyAttendance);
+router.get('/token-status', attendanceController.checkTokenStatus);
+router.post('/token-status', attendanceController.checkTokenStatus);
 router.get('/events', attendanceController.getEvents);
 router.get('/sessions/active', attendanceController.getActiveSession);
 router.get('/session/active', attendanceController.getActiveSession);

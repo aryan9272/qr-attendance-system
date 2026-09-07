@@ -81,7 +81,7 @@ exports.verifyAttendance = async (req, res) => {
       return res.status(400).json({ success: false, errorType: 'MISSING_FIELDS', error: 'Student Name, Registration No, and Email are required.' });
     }
 
-    // 1. Decrypt & Validate Dynamic AES Token (Strict 60s rotation + 10s grace period = 70s max window)
+    // 1. Decrypt & Validate Dynamic AES Token (Strict 70s validity window)
     let tokenPayload = null;
     try {
       const decResult = decryptToken(token, 70);
@@ -89,7 +89,7 @@ exports.verifyAttendance = async (req, res) => {
         return res.status(400).json({
           success: false,
           errorType: 'EXPIRED_TOKEN',
-          error: decResult?.error || 'Dynamic QR code has expired (60s validity + 10s grace limit exceeded). Please scan the current live QR code on the screen.',
+          error: 'QR code has expired. Please scan the current QR code on the screen.',
         });
       }
       tokenPayload = decResult.payload;
@@ -97,7 +97,7 @@ exports.verifyAttendance = async (req, res) => {
       return res.status(400).json({
         success: false,
         errorType: 'EXPIRED_TOKEN',
-        error: 'Dynamic QR code has expired (60s validity + 10s grace limit exceeded). Please scan the current live QR code on the screen.',
+        error: 'QR code has expired. Please scan the current QR code on the screen.',
       });
     }
 
@@ -297,7 +297,7 @@ exports.verifyAttendance = async (req, res) => {
         return res.status(403).json({
           success: false,
           errorType: 'ANTI_PROXY_DEVICE_LOCK',
-          error: `Anti-Proxy Lock: Multiple student submissions from the same device are prohibited. This device has already recorded attendance for ${deviceCollision.studentName || deviceCollision.regNo} (${deviceCollision.regNo}).`,
+          error: 'One submission per device allowed. This device has already recorded attendance for this session.',
           originalStudent: deviceCollision.studentName || deviceCollision.regNo,
           originalRegNo: deviceCollision.regNo,
           originalEmail: deviceCollision.email,
@@ -1094,5 +1094,40 @@ exports.getAttendanceStats = async (req, res) => {
         recent: fileAtt.slice(0, 200),
       },
     });
+  }
+};
+
+/**
+ * Check Scanned Token Status & Remaining Validity
+ * Endpoint: GET /api/attendance/token-status?token=...
+ */
+exports.checkTokenStatus = (req, res) => {
+  try {
+    const token = req.query.token || req.body?.token;
+    if (!token || typeof token !== 'string') {
+      return res.status(200).json({ valid: false, expired: true, remainingSeconds: 0, error: 'No QR code token provided.' });
+    }
+
+    const result = decryptToken(token, 70);
+    if (!result || !result.isValid || !result.payload) {
+      return res.status(200).json({
+        valid: false,
+        expired: true,
+        remainingSeconds: 0,
+        ageSeconds: result?.ageSeconds || 71,
+        error: 'QR code has expired. Please scan the current QR code on the screen.',
+      });
+    }
+
+    const remainingSeconds = Math.max(0, 70 - result.ageSeconds);
+    return res.status(200).json({
+      valid: true,
+      expired: false,
+      remainingSeconds,
+      ageSeconds: result.ageSeconds,
+      sessionId: result.payload.sessionId || result.payload.eventId || '',
+    });
+  } catch (e) {
+    return res.status(200).json({ valid: false, expired: true, remainingSeconds: 0, error: 'Invalid QR code.' });
   }
 };
