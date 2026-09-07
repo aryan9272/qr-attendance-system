@@ -42,6 +42,7 @@ export default function Navbar() {
 
   const isAdminRoute = location.pathname.startsWith('/admin') || location.pathname === '/';
   const isLoginPage = location.pathname === '/admin/login';
+  const isScanPage = location.pathname.startsWith('/scan');
 
   const checkAdminSession = async () => {
     try {
@@ -312,9 +313,11 @@ export default function Navbar() {
                   <span className="font-display font-black text-lg sm:text-xl tracking-tight text-white">
                     ProxyQr
                   </span>
-                  <span className="inline-flex items-center text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-slate-900 text-cyan-300 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.15)]">
-                    ADMIN DASHBOARD
-                  </span>
+                  {!isScanPage && (
+                    <span className="inline-flex items-center text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-slate-900 text-cyan-300 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.15)]">
+                      ADMIN DASHBOARD
+                    </span>
+                  )}
                 </div>
                 <span className="text-[10px] font-mono text-cyan-400 font-semibold tracking-wide">
                   By Aryan Kale
@@ -333,7 +336,7 @@ export default function Navbar() {
               </div>
 
               {/* Admin Mode Badge */}
-              {adminUser && !isLoginPage && (
+              {adminUser && !isLoginPage && !isScanPage && (
                 <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-xs font-mono text-cyan-300">
                   <UserCheck className="w-3.5 h-3.5 text-cyan-400" />
                   <span>
@@ -343,7 +346,7 @@ export default function Navbar() {
               )}
 
               {/* Account Controls */}
-              {adminUser && !isLoginPage && (
+              {adminUser && !isLoginPage && !isScanPage && (
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setIsChangePasswordModalOpen(true)}
@@ -378,7 +381,7 @@ export default function Navbar() {
       </header>
 
       {/* Crash Guard Banner: Unterminated Paused Sessions Detected */}
-      {unterminatedSessions.length > 0 && !isLoginPage && (
+      {unterminatedSessions.length > 0 && !isLoginPage && !isScanPage && (
         <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2.5 text-xs font-mono text-amber-200 animate-fadeIn">
           <div className="container mx-auto flex items-center justify-between">
             <div className="flex items-center gap-2">
