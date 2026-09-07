@@ -222,17 +222,28 @@ export default function StudentScanner() {
     return Math.round(R * c);
   };
 
-  const targetLat = qrData?.latitude || 28.6139;
-  const targetLng = qrData?.longitude || 77.2090;
-  const liveDistanceMeters = calculateHaversine(
-    userLocation.latitude,
-    userLocation.longitude,
-    targetLat,
-    targetLng
-  );
+  const targetLat = qrData?.latitude;
+  const targetLng = qrData?.longitude;
+  const isTargetPlaceholder =
+    !targetLat ||
+    !targetLng ||
+    qrData?.isCalibrated === false ||
+    (targetLat === 28.6139 && targetLng === 77.2090);
+  const isGeofenceActive = qrData?.geofenceEnabled !== false;
+
+  let liveDistanceMeters = 0;
+  if (!isTargetPlaceholder && typeof userLocation?.latitude === 'number' && typeof userLocation?.longitude === 'number') {
+    liveDistanceMeters = calculateHaversine(
+      userLocation.latitude,
+      userLocation.longitude,
+      targetLat,
+      targetLng
+    );
+  }
+
   const adminRadius = qrData?.allowedRadiusMeters || 50;
   const effectiveBoundary = adminRadius + Math.min(gpsAccuracy, 30);
-  const isInsideGeofence = liveDistanceMeters <= effectiveBoundary;
+  const isInsideGeofence = !isGeofenceActive || isTargetPlaceholder || liveDistanceMeters <= effectiveBoundary;
 
   // Initialize Google Identity Services (GSI) SDK
   useEffect(() => {
@@ -588,12 +599,22 @@ export default function StudentScanner() {
             <div>
               <div className="text-[10px] text-slate-400">ESTIMATED DISTANCE</div>
               <div className={`font-display font-bold text-sm ${isInsideGeofence ? 'text-emerald-400' : 'text-amber-400'}`}>
-                ~{liveDistanceMeters}m away
+                {!isGeofenceActive
+                  ? 'Bypassed (Anywhere)'
+                  : isTargetPlaceholder
+                  ? 'Auto-Anchored'
+                  : `~${liveDistanceMeters}m away`}
               </div>
             </div>
             <div className="text-right">
               <div className="text-[10px] text-slate-400">ALLOWED BOUNDARY</div>
-              <div className="font-bold text-slate-200 text-sm">{effectiveBoundary}m max</div>
+              <div className="font-bold text-slate-200 text-sm">
+                {!isGeofenceActive
+                  ? 'Universal'
+                  : isTargetPlaceholder
+                  ? 'Classroom Sync'
+                  : `${effectiveBoundary}m max`}
+              </div>
             </div>
             <div>
               <span
@@ -603,7 +624,11 @@ export default function StudentScanner() {
                     : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                 }`}
               >
-                {isInsideGeofence ? 'IN RANGE' : 'CHECK RANGE'}
+                {!isGeofenceActive
+                  ? 'GEOFENCE OFF'
+                  : isInsideGeofence
+                  ? 'IN RANGE'
+                  : 'CHECK RANGE'}
               </span>
             </div>
           </div>

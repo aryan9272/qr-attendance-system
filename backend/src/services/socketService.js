@@ -47,6 +47,10 @@ function initSocketService(io) {
         labIdentifier: session.labIdentifier,
         title: session.title,
         proctorName: session.proctorName,
+        latitude: session.latitude,
+        longitude: session.longitude,
+        isCalibrated: session.isCalibrated,
+        geofenceEnabled: session.geofenceEnabled !== false,
         remainingSeconds: session.currentCountdown,
         totalSeconds: session.tokenValiditySeconds,
         currentToken: session.currentToken,
@@ -96,8 +100,10 @@ function initSocketService(io) {
               labIdentifier: dbEvent.labIdentifier,
               title: dbEvent.title,
               proctorName: dbEvent.proctorName,
-              latitude: 28.6139,
-              longitude: 77.2090,
+              latitude: typeof dbEvent.latitude === 'number' ? dbEvent.latitude : null,
+              longitude: typeof dbEvent.longitude === 'number' ? dbEvent.longitude : null,
+              isCalibrated: !!dbEvent.isCalibrated,
+              geofenceEnabled: dbEvent.geofenceEnabled !== false,
               allowedRadiusMeters: dbEvent.allowedRadiusMeters || 50,
               tokenValiditySeconds: 60,
               currentCountdown: 60,
@@ -124,8 +130,10 @@ function initSocketService(io) {
             title: stored.title,
             proctorName: stored.proctorName,
             presenterName: stored.presenterName,
-            latitude: stored.latitude || 28.6139,
-            longitude: stored.longitude || 77.2090,
+            latitude: typeof stored.latitude === 'number' ? stored.latitude : null,
+            longitude: typeof stored.longitude === 'number' ? stored.longitude : null,
+            isCalibrated: !!stored.isCalibrated,
+            geofenceEnabled: stored.geofenceEnabled !== false,
             allowedRadiusMeters: stored.allowedRadiusMeters || 50,
             tokenValiditySeconds: 60,
             currentCountdown: 60,
@@ -159,6 +167,10 @@ function initSocketService(io) {
         labIdentifier: session.labIdentifier,
         title: session.title,
         proctorName: session.proctorName,
+        latitude: session.latitude,
+        longitude: session.longitude,
+        isCalibrated: session.isCalibrated,
+        geofenceEnabled: session.geofenceEnabled !== false,
         token: session.currentToken,
         previousToken: session.previousToken,
         qrUrl: session.qrUrl,
@@ -179,7 +191,50 @@ function initSocketService(io) {
       }
     });
 
-    // Admin Geofence Radius Slider Update
+    // Admin Full Geofence Configuration Update
+    socket.on('update-geofence', ({ sessionId, allowedRadiusMeters, latitude, longitude, geofenceEnabled }) => {
+      if (!sessionId) return;
+      const targetId = String(sessionId).trim().toUpperCase();
+      let session = activeSessions.get(targetId);
+
+      const updates = {};
+      if (typeof allowedRadiusMeters !== 'undefined') {
+        const radius = Number(allowedRadiusMeters) || 50;
+        updates.allowedRadiusMeters = radius;
+        if (session) session.allowedRadiusMeters = radius;
+      }
+      if (typeof latitude === 'number' && typeof longitude === 'number') {
+        updates.latitude = latitude;
+        updates.longitude = longitude;
+        updates.isCalibrated = true;
+        if (session) {
+          session.latitude = latitude;
+          session.longitude = longitude;
+          session.isCalibrated = true;
+        }
+      }
+      if (typeof geofenceEnabled === 'boolean') {
+        updates.geofenceEnabled = geofenceEnabled;
+        if (session) session.geofenceEnabled = geofenceEnabled;
+      }
+
+      storageService.updateSession(targetId, updates);
+
+      if (getIsConnected()) {
+        Event.updateOne({ sessionId: targetId }, { $set: updates }).catch(() => {});
+      }
+
+      io.to(`session:${targetId}`).emit('geofence_updated', {
+        sessionId: targetId,
+        allowedRadiusMeters: session?.allowedRadiusMeters ?? updates.allowedRadiusMeters ?? 50,
+        latitude: session?.latitude ?? updates.latitude,
+        longitude: session?.longitude ?? updates.longitude,
+        isCalibrated: session?.isCalibrated ?? updates.isCalibrated ?? false,
+        geofenceEnabled: session?.geofenceEnabled ?? updates.geofenceEnabled ?? true,
+      });
+    });
+
+    // Admin Geofence Radius Slider Update (Backward Compatibility)
     socket.on('update-geofence-radius', ({ sessionId, allowedRadiusMeters }) => {
       if (!sessionId) return;
       const targetId = String(sessionId).trim().toUpperCase();
@@ -190,6 +245,8 @@ function initSocketService(io) {
         session.allowedRadiusMeters = radius;
       }
 
+      storageService.updateSession(targetId, { allowedRadiusMeters: radius });
+
       if (getIsConnected()) {
         Event.updateOne({ sessionId: targetId }, { allowedRadiusMeters: radius }).catch(() => {});
       }
@@ -197,6 +254,10 @@ function initSocketService(io) {
       io.to(`session:${targetId}`).emit('geofence_updated', {
         sessionId: targetId,
         allowedRadiusMeters: radius,
+        latitude: session?.latitude,
+        longitude: session?.longitude,
+        isCalibrated: session?.isCalibrated,
+        geofenceEnabled: session?.geofenceEnabled !== false,
       });
     });
 
@@ -386,6 +447,10 @@ function rotateToken(io, sessionId) {
     labIdentifier: session.labIdentifier,
     title: session.title,
     proctorName: session.proctorName,
+    latitude: session.latitude,
+    longitude: session.longitude,
+    isCalibrated: session.isCalibrated,
+    geofenceEnabled: session.geofenceEnabled !== false,
     token: session.currentToken,
     previousToken: session.previousToken,
     qrUrl: session.qrUrl,

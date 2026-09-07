@@ -176,32 +176,67 @@ exports.verifyAttendance = async (req, res) => {
     const adminRadius = session.allowedRadiusMeters || 50;
     const clientAccuracy = Number(req.body.accuracy) || 5;
     const adaptiveAllowedRadius = adminRadius + Math.min(clientAccuracy, 30);
+    const isGeofenceEnabled = session.geofenceEnabled !== false;
 
-    const targetLat = session.latitude || 28.6139;
-    const targetLng = session.longitude || 77.2090;
+    const studentLat = userLocation?.latitude;
+    const studentLng = userLocation?.longitude;
 
-    const studentLat = userLocation?.latitude ?? 28.6139;
-    const studentLng = userLocation?.longitude ?? 77.2090;
+    let distanceMeters = 0;
 
-    // Haversine Distance Calculation (Meters)
-    const toRad = (val) => (val * Math.PI) / 180;
-    const R = 6371000; // Earth radius in meters
-    const dLat = toRad(studentLat - targetLat);
-    const dLng = toRad(studentLng - targetLng);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(toRad(targetLat)) * Math.cos(toRad(studentLat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const distanceMeters = Math.round(R * c);
+    if (isGeofenceEnabled) {
+      // Check if session coordinates are still uncalibrated placeholder (e.g. dummy Delhi coordinates 28.6139, 77.2090 or null)
+      const isPlaceholderCoords =
+        !session.latitude ||
+        !session.longitude ||
+        session.isCalibrated === false ||
+        (session.latitude === 28.6139 && session.longitude === 77.2090);
 
-    if (distanceMeters > adaptiveAllowedRadius) {
-      return res.status(400).json({
-        success: false,
-        errorType: 'OUT_OF_GEOFENCE',
-        error: `Location violation: You are ${distanceMeters}m away from the classroom (Allowed boundary: ${adaptiveAllowedRadius}m).`,
-        distanceFromTargetMeters: distanceMeters,
-        allowedRadiusMeters: adaptiveAllowedRadius,
-      });
+      if (isPlaceholderCoords) {
+        // Teacher has not calibrated a specific GPS coordinate for this classroom yet.
+        // Auto-anchor the classroom coordinates to this first real device scan!
+        if (typeof studentLat === 'number' && typeof studentLng === 'number') {
+          session.latitude = studentLat;
+          session.longitude = studentLng;
+          session.isCalibrated = true;
+          storageService.updateSession(targetSessionId, {
+            latitude: studentLat,
+            longitude: studentLng,
+            isCalibrated: true,
+          });
+          if (getIsConnected()) {
+            Event.updateOne(
+              { sessionId: targetSessionId },
+              { latitude: studentLat, longitude: studentLng, isCalibrated: true }
+            ).catch(() => {});
+          }
+          console.log(`[Geofence Auto-Anchor] Anchored classroom ${targetSessionId} to student fix: ${studentLat}, ${studentLng}`);
+          distanceMeters = 0;
+        }
+      } else if (typeof studentLat === 'number' && typeof studentLng === 'number') {
+        const targetLat = session.latitude;
+        const targetLng = session.longitude;
+
+        // Haversine Distance Calculation (Meters)
+        const toRad = (val) => (val * Math.PI) / 180;
+        const R = 6371000; // Earth radius in meters
+        const dLat = toRad(studentLat - targetLat);
+        const dLng = toRad(studentLng - targetLng);
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(toRad(targetLat)) * Math.cos(toRad(studentLat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        distanceMeters = Math.round(R * c);
+
+        if (distanceMeters > adaptiveAllowedRadius) {
+          return res.status(400).json({
+            success: false,
+            errorType: 'OUT_OF_GEOFENCE',
+            error: `Location violation: You are ${distanceMeters}m away from the classroom (Allowed boundary: ${adaptiveAllowedRadius}m).`,
+            distanceFromTargetMeters: distanceMeters,
+            allowedRadiusMeters: adaptiveAllowedRadius,
+          });
+        }
+      }
     }
 
     // 4. Anti-Proxy Lock: Check Duplicate Student Record or Rapid IP Submission
@@ -329,7 +364,17 @@ exports.verifyAttendance = async (req, res) => {
  */
 exports.createSession = async (req, res) => {
   try {
-    const { labIdentifier, title, proctorName, presenterName, customFields } = req.body;
+    const {
+      labIdentifier,
+      title,
+      proctorName,
+      presenterName,
+      customFields,
+      latitude,
+      longitude,
+      allowedRadiusMeters,
+      geofenceEnabled,
+    } = req.body;
 
     if (!labIdentifier || !title) {
       return res.status(400).json({ success: false, message: 'Lab Identifier and Session Title are required.' });
@@ -338,6 +383,9 @@ exports.createSession = async (req, res) => {
     const cleanLab = labIdentifier.trim();
     const cleanTitle = title.trim();
     const facultyName = (presenterName || proctorName || 'Faculty In-Charge').trim();
+    const hasAdminCoords = typeof latitude === 'number' && typeof longitude === 'number';
+    const isGeofenceActive = geofenceEnabled !== false;
+    const radius = Number(allowedRadiusMeters) || 50;
 
     // 1. Anti-Duplicate Check: If an unstarted session with the same lab & title was created within 15s, return it
     if (getIsConnected()) {
@@ -384,7 +432,11 @@ exports.createSession = async (req, res) => {
       proctorName: facultyName,
       presenterName: facultyName,
       status: 'PAUSED',
-      allowedRadiusMeters: 50,
+      latitude: hasAdminCoords ? latitude : null,
+      longitude: hasAdminCoords ? longitude : null,
+      isCalibrated: hasAdminCoords,
+      allowedRadiusMeters: radius,
+      geofenceEnabled: isGeofenceActive,
       createdAt: new Date().toISOString(),
       customFields: customFields || { requireMobileNumber: false, requireWifiVerification: false },
     };
@@ -410,9 +462,11 @@ exports.createSession = async (req, res) => {
       title: eventData.title,
       proctorName: eventData.proctorName,
       presenterName: eventData.presenterName,
-      latitude: 28.6139,
-      longitude: 77.2090,
-      allowedRadiusMeters: 50,
+      latitude: eventData.latitude,
+      longitude: eventData.longitude,
+      isCalibrated: eventData.isCalibrated,
+      allowedRadiusMeters: eventData.allowedRadiusMeters,
+      geofenceEnabled: eventData.geofenceEnabled,
       tokenValiditySeconds: 60,
       currentCountdown: 60,
       currentToken: null,

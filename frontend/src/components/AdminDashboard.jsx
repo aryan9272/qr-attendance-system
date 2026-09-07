@@ -211,6 +211,7 @@ export default function AdminDashboard() {
     joinSession,
     clearSession,
     forceRotateQR,
+    updateGeofence,
     updateGeofenceRadius,
   } = useSocket();
 
@@ -220,12 +221,10 @@ export default function AdminDashboard() {
   // Sessions & Attendees Roster State (Backed by localStorage for zero-latency offline persistence)
   const [sessionsList, setSessionsList] = useState(() => {
     try {
-      const saved = localStorage.getItem('proxyqr_persisted_sessions');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
+      const cached = localStorage.getItem('proxyqr_persisted_sessions');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch (e) {}
     return SEED_HISTORICAL_SESSIONS;
@@ -247,8 +246,10 @@ export default function AdminDashboard() {
   const [attendeesRoster, setAttendeesRoster] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
 
-  // Geofence Radius Slider (30m, 60m, 120m)
+  // Geofence Radius & Calibration State
   const [geofenceRadius, setGeofenceRadius] = useState(50);
+  const [isGeofenceEnabled, setIsGeofenceEnabled] = useState(true);
+  const [isCalibratingLocation, setIsCalibratingLocation] = useState(false);
 
   // Fullscreen Projector Overlay Mode State
   const [isProjectorMode, setIsProjectorMode] = useState(false);
@@ -396,12 +397,54 @@ export default function AdminDashboard() {
     fetchRoster(selectedSessionId);
   }, [selectedSessionId, backendUrl]);
 
-  // Sync Geofence radius slider with qrData
+  // Sync Geofence radius slider and bypass toggle with qrData
   useEffect(() => {
     if (qrData?.allowedRadiusMeters) {
       setGeofenceRadius(qrData.allowedRadiusMeters);
     }
+    if (typeof qrData?.geofenceEnabled === 'boolean') {
+      setIsGeofenceEnabled(qrData.geofenceEnabled);
+    }
   }, [qrData]);
+
+  // Calibrate Classroom GPS using current admin device position
+  const handleCalibrateLocation = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser.');
+      return;
+    }
+    setIsCalibratingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        updateGeofence({
+          sessionId: selectedSessionId,
+          latitude,
+          longitude,
+          allowedRadiusMeters: geofenceRadius,
+          geofenceEnabled: isGeofenceEnabled,
+        });
+        setIsCalibratingLocation(false);
+        alert(`Classroom GPS calibrated successfully!\nCoordinates: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`);
+      },
+      (err) => {
+        setIsCalibratingLocation(false);
+        alert(`Failed to get device location: ${err.message}. Ensure location permissions are granted.`);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  // Toggle Geofence Enforcement On/Off
+  const handleToggleGeofence = () => {
+    const nextState = !isGeofenceEnabled;
+    setIsGeofenceEnabled(nextState);
+    updateGeofence({
+      sessionId: selectedSessionId,
+      allowedRadiusMeters: geofenceRadius,
+      geofenceEnabled: nextState,
+    });
+  };
 
   // Listen to Socket.IO real-time attendee additions and edits
   useEffect(() => {
@@ -449,6 +492,22 @@ export default function AdminDashboard() {
     }
     setIsCreatingSession(true);
     try {
+      // Opportunistically query device coordinates to seed classroom location
+      let deviceCoords = null;
+      if (navigator.geolocation) {
+        try {
+          deviceCoords = await new Promise((resolve) => {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+              () => resolve(null),
+              { enableHighAccuracy: true, timeout: 2500 }
+            );
+          });
+        } catch (e) {
+          // non-blocking
+        }
+      }
+
       const token = localStorage.getItem('admin_token');
       const { res, data } = await fetchWithFailover('/api/admin/sessions/create', {
         method: 'POST',
@@ -463,6 +522,10 @@ export default function AdminDashboard() {
           proctorName: (newPresenterName || 'Faculty In-Charge').trim(),
           presenterName: (newPresenterName || 'Faculty In-Charge').trim(),
           customFields: { requireMobileNumber: requireMobile },
+          latitude: deviceCoords?.latitude || null,
+          longitude: deviceCoords?.longitude || null,
+          allowedRadiusMeters: geofenceRadius || 50,
+          geofenceEnabled: true,
         }),
       });
 
@@ -1308,37 +1371,100 @@ export default function AdminDashboard() {
 
             {/* Live Stats & Dynamic Geofence Controls */}
             <div className="lg:col-span-5 space-y-6">
-              {/* Geofence Slider Card */}
+              {/* Classroom Geofence & GPS Controls Card */}
               <div className="glass-panel p-5 rounded-3xl space-y-4 border-l-4 border-l-cyan-500">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-2 text-cyan-400 font-display font-semibold text-sm">
                     <MapPin className="w-4 h-4" />
-                    <span>Dynamic Geofence Slider</span>
+                    <span>Classroom Geofence & GPS</span>
                   </div>
-                  <span className="text-xs font-mono font-bold px-3 py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                    {geofenceRadius}m RADIUS
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleToggleGeofence}
+                      className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border transition-all ${
+                        isGeofenceEnabled
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                          : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                      }`}
+                    >
+                      {isGeofenceEnabled ? '🛡️ ENFORCED' : '🌐 BYPASS ANYWHERE'}
+                    </button>
+                    <span className="text-xs font-mono font-bold px-3 py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                      {geofenceRadius}m RADIUS
+                    </span>
+                  </div>
                 </div>
 
+                {/* Status and Calibration Button */}
+                <div className="bg-slate-950/60 rounded-2xl p-3 border border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400 font-mono text-[11px]">Classroom Anchor:</span>
+                    {qrData?.isCalibrated || (qrData?.latitude && qrData?.latitude !== 28.6139) ? (
+                      <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1 font-semibold">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                        {qrData?.latitude ? `${Number(qrData.latitude).toFixed(4)}, ${Number(qrData.longitude).toFixed(4)}` : 'Calibrated'}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono text-cyan-400 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 text-cyan-400" />
+                        Auto-anchors on first scan
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isCalibratingLocation || !selectedSessionId}
+                    onClick={handleCalibrateLocation}
+                    className="w-full py-2 px-3 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 font-mono text-xs flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-50"
+                  >
+                    {isCalibratingLocation ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-400" />
+                        <span>Locking Device GPS...</span>
+                      </>
+                    ) : (
+                      <>
+                        <MapPin className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>📍 Calibrate Classroom GPS</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Slider */}
                 <div className="space-y-3 font-mono text-xs">
+                  <div className="flex justify-between items-center text-slate-300 text-[11px]">
+                    <span>Allowed Distance Boundary</span>
+                    <span className="text-cyan-400 font-bold">{geofenceRadius} meters</span>
+                  </div>
                   <input
                     type="range"
                     min="30"
-                    max="120"
+                    max="500"
                     step="10"
                     value={geofenceRadius}
+                    disabled={!isGeofenceEnabled}
                     onChange={(e) => {
                       const r = Number(e.target.value);
                       setGeofenceRadius(r);
-                      updateGeofenceRadius(selectedSessionId, r);
+                      updateGeofence({
+                        sessionId: selectedSessionId,
+                        allowedRadiusMeters: r,
+                        geofenceEnabled: isGeofenceEnabled,
+                      });
                     }}
-                    className="w-full h-2 bg-slate-900 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                    className={`w-full h-2 rounded-lg appearance-none cursor-pointer accent-cyan-400 ${
+                      isGeofenceEnabled ? 'bg-slate-900' : 'bg-slate-800 opacity-40 cursor-not-allowed'
+                    }`}
                   />
 
                   <div className="flex justify-between text-[10px] text-slate-400 font-mono">
                     <span>30m (Lab)</span>
-                    <span>60m (Lecture Hall)</span>
-                    <span>120m (Auditorium)</span>
+                    <span>75m (Hall)</span>
+                    <span>200m (Wing)</span>
+                    <span>500m (Campus)</span>
                   </div>
                 </div>
               </div>

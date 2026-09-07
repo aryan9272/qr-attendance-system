@@ -103,7 +103,14 @@ export const SocketProvider = ({ children }) => {
     });
 
     newSocket.on('geofence_updated', (data) => {
-      setQrData((prev) => (prev ? { ...prev, allowedRadiusMeters: data.allowedRadiusMeters } : prev));
+      setQrData((prev) => (prev ? {
+        ...prev,
+        allowedRadiusMeters: data.allowedRadiusMeters ?? prev.allowedRadiusMeters,
+        latitude: typeof data.latitude !== 'undefined' ? data.latitude : prev.latitude,
+        longitude: typeof data.longitude !== 'undefined' ? data.longitude : prev.longitude,
+        isCalibrated: typeof data.isCalibrated !== 'undefined' ? data.isCalibrated : prev.isCalibrated,
+        geofenceEnabled: typeof data.geofenceEnabled !== 'undefined' ? data.geofenceEnabled : prev.geofenceEnabled,
+      } : prev));
     });
 
     newSocket.on('session_status_changed', (data) => {
@@ -173,11 +180,21 @@ export const SocketProvider = ({ children }) => {
     }
   };
 
-  const updateGeofenceRadius = (sessionId, allowedRadiusMeters) => {
+  const updateGeofence = ({ sessionId, allowedRadiusMeters, latitude, longitude, geofenceEnabled }) => {
     const cleanId = (sessionId || currentSessionId).toUpperCase();
     if (socket && connected) {
-      socket.emit('update-geofence-radius', { sessionId: cleanId, allowedRadiusMeters });
+      socket.emit('update-geofence', {
+        sessionId: cleanId,
+        allowedRadiusMeters,
+        latitude,
+        longitude,
+        geofenceEnabled,
+      });
     }
+  };
+
+  const updateGeofenceRadius = (sessionId, allowedRadiusMeters) => {
+    updateGeofence({ sessionId, allowedRadiusMeters });
   };
 
   return (
@@ -193,6 +210,7 @@ export const SocketProvider = ({ children }) => {
         clearSession,
         joinEvent: joinSession, // Backward compatibility alias
         forceRotateQR,
+        updateGeofence,
         updateGeofenceRadius,
       }}
     >
