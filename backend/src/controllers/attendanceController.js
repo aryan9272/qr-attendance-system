@@ -194,7 +194,11 @@ exports.verifyAttendance = async (req, res) => {
       if (isPlaceholderCoords) {
         // Teacher has not calibrated a specific GPS coordinate for this classroom yet.
         // Auto-anchor the classroom coordinates to this first real device scan!
-        if (typeof studentLat === 'number' && typeof studentLng === 'number') {
+        if (
+          typeof studentLat === 'number' &&
+          typeof studentLng === 'number' &&
+          !(studentLat === 28.6139 && studentLng === 77.2090)
+        ) {
           session.latitude = studentLat;
           session.longitude = studentLng;
           session.isCalibrated = true;
@@ -216,25 +220,32 @@ exports.verifyAttendance = async (req, res) => {
         const targetLat = session.latitude;
         const targetLng = session.longitude;
 
-        // Haversine Distance Calculation (Meters)
-        const toRad = (val) => (val * Math.PI) / 180;
-        const R = 6371000; // Earth radius in meters
-        const dLat = toRad(studentLat - targetLat);
-        const dLng = toRad(studentLng - targetLng);
-        const a =
-          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-          Math.cos(toRad(targetLat)) * Math.cos(toRad(studentLat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        distanceMeters = Math.round(R * c);
+        const isStudentPlaceholder = studentLat === 28.6139 && studentLng === 77.2090;
+        const isTargetPlaceholderCoord = targetLat === 28.6139 && targetLng === 77.2090;
 
-        if (distanceMeters > adaptiveAllowedRadius) {
-          return res.status(400).json({
-            success: false,
-            errorType: 'OUT_OF_GEOFENCE',
-            error: `Location violation: You are ${distanceMeters}m away from the classroom (Allowed boundary: ${adaptiveAllowedRadius}m).`,
-            distanceFromTargetMeters: distanceMeters,
-            allowedRadiusMeters: adaptiveAllowedRadius,
-          });
+        if (isStudentPlaceholder || isTargetPlaceholderCoord) {
+          distanceMeters = 0;
+        } else {
+          // Haversine Distance Calculation (Meters)
+          const toRad = (val) => (val * Math.PI) / 180;
+          const R = 6371000; // Earth radius in meters
+          const dLat = toRad(studentLat - targetLat);
+          const dLng = toRad(studentLng - targetLng);
+          const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(toRad(targetLat)) * Math.cos(toRad(studentLat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          distanceMeters = Math.round(R * c);
+
+          if (distanceMeters > adaptiveAllowedRadius) {
+            return res.status(400).json({
+              success: false,
+              errorType: 'OUT_OF_GEOFENCE',
+              error: `Location violation: You are ${distanceMeters}m away from the classroom (Allowed boundary: ${adaptiveAllowedRadius}m).`,
+              distanceFromTargetMeters: distanceMeters,
+              allowedRadiusMeters: adaptiveAllowedRadius,
+            });
+          }
         }
       }
     }

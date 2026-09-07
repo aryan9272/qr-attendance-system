@@ -121,8 +121,8 @@ export default function StudentScanner() {
   const [branch, setBranch] = useState(DEPARTMENTS[0]);
   const [mobileNumber, setMobileNumber] = useState('');
 
-  // Geolocation State
-  const [userLocation, setUserLocation] = useState({ latitude: 28.6139, longitude: 77.2090 });
+  // Geolocation State (Initialized to null to prevent false 1,000km Delhi offset)
+  const [userLocation, setUserLocation] = useState(null);
   const [gpsAccuracy, setGpsAccuracy] = useState(5);
   const [isRefreshingGps, setIsRefreshingGps] = useState(false);
 
@@ -221,29 +221,67 @@ export default function StudentScanner() {
     };
   }, [tokenFromUrl]);
 
-  // Request High Accuracy Geolocation
+  // Request Geolocation with fast network fallback and continuous refinement
   const requestGpsFix = () => {
-    if ('geolocation' in navigator) {
-      setIsRefreshingGps(true);
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setUserLocation({
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          });
-          setGpsAccuracy(Math.round(pos.coords.accuracy || 5));
-          setIsRefreshingGps(false);
-        },
-        () => {
-          setIsRefreshingGps(false);
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-      );
-    }
+    if (!('geolocation' in navigator)) return;
+    setIsRefreshingGps(true);
+
+    // Fast-path: Rapid network/Wi-Fi fix (5s timeout)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUserLocation({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+        });
+        setGpsAccuracy(Math.round(pos.coords.accuracy || 10));
+        setIsRefreshingGps(false);
+      },
+      () => {
+        // Fallback: Low accuracy network triangulation (works reliably indoors)
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            setUserLocation({
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+            });
+            setGpsAccuracy(Math.round(pos.coords.accuracy || 20));
+            setIsRefreshingGps(false);
+          },
+          (err) => {
+            console.warn('Geolocation fallback note:', err.message);
+            setIsRefreshingGps(false);
+          },
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+        );
+      },
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
+    );
   };
 
   useEffect(() => {
     requestGpsFix();
+    // Continuous watch to refine GPS coordinates as hardware fixes
+    let watchId = null;
+    if ('geolocation' in navigator) {
+      try {
+        watchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            setUserLocation({
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+            });
+            setGpsAccuracy(Math.round(pos.coords.accuracy || 10));
+          },
+          () => {},
+          { enableHighAccuracy: false, maximumAge: 60000, timeout: 15000 }
+        );
+      } catch (e) {}
+    }
+    return () => {
+      if (watchId !== null && 'geolocation' in navigator) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
   }, []);
 
   // Calculate live Haversine Distance
@@ -268,19 +306,26 @@ export default function StudentScanner() {
     (targetLat === 28.6139 && targetLng === 77.2090);
   const isGeofenceActive = qrData?.geofenceEnabled !== false;
 
-  let liveDistanceMeters = 0;
-  if (!isTargetPlaceholder && typeof userLocation?.latitude === 'number' && typeof userLocation?.longitude === 'number') {
-    liveDistanceMeters = calculateHaversine(
-      userLocation.latitude,
-      userLocation.longitude,
-      targetLat,
-      targetLng
-    );
+  let liveDistanceMeters = null;
+  if (!isTargetPlaceholder && userLocation && typeof userLocation.latitude === 'number' && typeof userLocation.longitude === 'number') {
+    // Only calculate distance if coordinates are not dummy Delhi placeholders
+    if (!(userLocation.latitude === 28.6139 && userLocation.longitude === 77.2090)) {
+      liveDistanceMeters = calculateHaversine(
+        userLocation.latitude,
+        userLocation.longitude,
+        targetLat,
+        targetLng
+      );
+    }
   }
 
   const adminRadius = qrData?.allowedRadiusMeters || 50;
   const effectiveBoundary = adminRadius + Math.min(gpsAccuracy, 30);
-  const isInsideGeofence = !isGeofenceActive || isTargetPlaceholder || liveDistanceMeters <= effectiveBoundary;
+  const isInsideGeofence =
+    !isGeofenceActive ||
+    isTargetPlaceholder ||
+    liveDistanceMeters === null ||
+    liveDistanceMeters <= effectiveBoundary;
 
   // Initialize Google OAuth & Auto-Trigger Account Chooser
   useEffect(() => {
@@ -642,6 +687,8 @@ export default function StudentScanner() {
                     ? 'Bypassed'
                     : isTargetPlaceholder
                     ? 'Classroom'
+                    : liveDistanceMeters === null
+                    ? (isRefreshingGps ? 'Locating...' : 'Classroom')
                     : `~${liveDistanceMeters}m`}
                 </span>
               </div>
