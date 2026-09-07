@@ -44,6 +44,9 @@ function initSocketService(io) {
 
       io.to(`session:${sessionId}`).emit('qr-tick', {
         sessionId,
+        labIdentifier: session.labIdentifier,
+        title: session.title,
+        proctorName: session.proctorName,
         remainingSeconds: session.currentCountdown,
         totalSeconds: session.tokenValiditySeconds,
         currentToken: session.currentToken,
@@ -249,6 +252,9 @@ function startSession(io, sessionId) {
 
   io.to(`session:${sessionId}`).emit('session_status_changed', {
     sessionId,
+    labIdentifier: session.labIdentifier,
+    title: session.title,
+    proctorName: session.proctorName,
     status: 'ACTIVE',
     isEnded: false,
   });
@@ -274,12 +280,18 @@ function pauseSession(io, sessionId) {
 
   io.to(`session:${sessionId}`).emit('session_status_changed', {
     sessionId,
+    labIdentifier: session.labIdentifier,
+    title: session.title,
+    proctorName: session.proctorName,
     status: 'PAUSED',
     isEnded: false,
   });
 
   io.to(`session:${sessionId}`).emit('qr-update', {
     sessionId: session.sessionId,
+    labIdentifier: session.labIdentifier,
+    title: session.title,
+    proctorName: session.proctorName,
     token: null,
     previousToken: null,
     qrUrl: null,
@@ -312,6 +324,9 @@ function terminateSession(io, sessionId) {
 
   io.to(`session:${sessionId}`).emit('session_status_changed', {
     sessionId,
+    labIdentifier: session?.labIdentifier,
+    title: session?.title,
+    proctorName: session?.proctorName,
     status: 'TERMINATED',
     isEnded: true,
     endedAt,
@@ -319,6 +334,9 @@ function terminateSession(io, sessionId) {
 
   io.to(`session:${sessionId}`).emit('session_ended', {
     sessionId,
+    labIdentifier: session?.labIdentifier,
+    title: session?.title,
+    proctorName: session?.proctorName,
     status: 'TERMINATED',
     isEnded: true,
     endedAt,
@@ -327,6 +345,9 @@ function terminateSession(io, sessionId) {
 
   io.to(`session:${sessionId}`).emit('qr-update', {
     sessionId,
+    labIdentifier: session?.labIdentifier,
+    title: session?.title,
+    proctorName: session?.proctorName,
     token: null,
     previousToken: null,
     qrUrl: null,
@@ -362,6 +383,9 @@ function rotateToken(io, sessionId) {
 
   io.to(`session:${sessionId}`).emit('qr-update', {
     sessionId: session.sessionId,
+    labIdentifier: session.labIdentifier,
+    title: session.title,
+    proctorName: session.proctorName,
     token: session.currentToken,
     previousToken: session.previousToken,
     qrUrl: session.qrUrl,

@@ -1385,10 +1385,10 @@ export default function AdminDashboard() {
                   <div className="text-xs font-mono text-cyan-400 font-bold flex items-center gap-2">
                     <span className="bg-slate-900 px-2 py-0.5 rounded border border-slate-800 text-white">{selectedSessionId}</span>
                     <span>•</span>
-                    <span>{qrData?.labIdentifier || 'Lab Room'}</span>
+                    <span>{activeSessionObj?.labIdentifier || qrData?.labIdentifier || 'Lab Room'}</span>
                   </div>
                   <h3 className="text-lg font-bold text-white font-display">
-                    {qrData?.title || 'Current Session Attendance Roster'}
+                    {activeSessionObj?.title || qrData?.title || 'Current Session Attendance Roster'}
                   </h3>
                 </div>
               </div>
@@ -1776,10 +1776,10 @@ export default function AdminDashboard() {
           <div className="space-y-6 text-center max-w-2xl w-full">
             <div className="space-y-1">
               <span className="text-xs font-mono font-bold text-cyan-400 tracking-wider uppercase">
-                {selectedSessionId} • {qrData?.labIdentifier || 'Lab 101'}
+                {selectedSessionId} • {activeSessionObj?.labIdentifier || qrData?.labIdentifier || 'Lab Room'}
               </span>
               <h1 className="font-display font-black text-3xl sm:text-4xl text-white">
-                {qrData?.title || 'CS202: Advanced Operating Systems Lab'}
+                {activeSessionObj?.title || qrData?.title || selectedSessionId || 'Attendance Session'}
               </h1>
             </div>
 

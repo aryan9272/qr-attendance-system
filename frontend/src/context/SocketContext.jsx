@@ -67,8 +67,20 @@ export const SocketProvider = ({ children }) => {
     });
 
     newSocket.on('qr-update', (data) => {
-      console.log('[Socket.IO Frontend] QR Token Updated for session:', data.sessionId);
-      setQrData(data);
+      console.log('[Socket.IO Frontend] QR Token Updated for session:', data?.sessionId);
+      if (!data) return;
+      setQrData((prev) => {
+        if (prev && prev.sessionId === data.sessionId) {
+          return {
+            ...prev,
+            ...data,
+            title: data.title || prev.title,
+            labIdentifier: data.labIdentifier || prev.labIdentifier,
+            proctorName: data.proctorName || prev.proctorName,
+          };
+        }
+        return data;
+      });
       if (typeof data.remainingSeconds === 'number') {
         setCountdown(data.remainingSeconds);
       }
@@ -78,9 +90,16 @@ export const SocketProvider = ({ children }) => {
       if (typeof data.remainingSeconds === 'number') {
         setCountdown(data.remainingSeconds);
       }
-      if (data.currentToken) {
-        setQrData((prev) => (prev ? { ...prev, ...data } : data));
-      }
+      setQrData((prev) => {
+        if (!prev) return data;
+        return {
+          ...prev,
+          ...data,
+          title: data.title || prev.title,
+          labIdentifier: data.labIdentifier || prev.labIdentifier,
+          proctorName: data.proctorName || prev.proctorName,
+        };
+      });
     });
 
     newSocket.on('geofence_updated', (data) => {
@@ -88,7 +107,14 @@ export const SocketProvider = ({ children }) => {
     });
 
     newSocket.on('session_status_changed', (data) => {
-      setQrData((prev) => (prev ? { ...prev, status: data.status, endedAt: data.endedAt } : prev));
+      setQrData((prev) => (prev ? {
+        ...prev,
+        status: data.status,
+        endedAt: data.endedAt,
+        title: data.title || prev.title,
+        labIdentifier: data.labIdentifier || prev.labIdentifier,
+        proctorName: data.proctorName || prev.proctorName,
+      } : prev));
     });
 
     newSocket.on('session_ended', (data) => {
