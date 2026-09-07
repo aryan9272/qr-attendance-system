@@ -91,3 +91,17 @@ input:-webkit-autofill:active {
 .progress-bar-fill {
   transition: width 1s linear;
 }
+
+/* Hide navbar and prevent scrolling when projector mode is active */
+body.projector-mode-active header,
+body.projector-mode-active nav {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+body.projector-mode-active {
+  overflow: hidden !important;
+}
+

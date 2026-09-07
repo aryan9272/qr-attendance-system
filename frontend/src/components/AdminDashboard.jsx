@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import * as XLSX from 'xlsx';
 import {
@@ -843,6 +844,84 @@ export default function AdminDashboard() {
   const activeSessionObj = sessionsList.find((s) => s.sessionId === selectedSessionId) || qrData;
   const isSessionTerminated = activeSessionObj?.status === 'TERMINATED' || qrData?.status === 'TERMINATED';
 
+  // Fullscreen Projector Mode Handlers & Controls
+  const enterProjectorMode = async () => {
+    setIsProjectorMode(true);
+    try {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen().catch(() => {});
+      }
+    } catch (e) {}
+  };
+
+  const exitProjectorMode = async () => {
+    setIsProjectorMode(false);
+    try {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        await document.exitFullscreen().catch(() => {});
+      }
+    } catch (e) {}
+  };
+
+  // Keyboard shortcut listener: Press 'F' to toggle fullscreen, 'Esc' to exit
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Ignore shortcut if user is typing in inputs or forms
+      const activeTag = document.activeElement?.tagName?.toLowerCase();
+      const isInput =
+        ['input', 'textarea', 'select'].includes(activeTag) ||
+        document.activeElement?.isContentEditable;
+      if (isInput) return;
+
+      if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        if (isProjectorMode) {
+          exitProjectorMode();
+        } else if (isSessionActive && !isSessionTerminated) {
+          enterProjectorMode();
+        }
+      } else if (e.key === 'Escape') {
+        if (isProjectorMode) {
+          e.preventDefault();
+          exitProjectorMode();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isProjectorMode, isSessionActive, isSessionTerminated]);
+
+  // Sync state if user exits via browser ESC or native browser controls
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement && isProjectorMode) {
+        setIsProjectorMode(false);
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
+  }, [isProjectorMode]);
+
+  // Hide headers, navbars and prevent scrolling while in projector mode
+  useEffect(() => {
+    if (isProjectorMode) {
+      document.body.classList.add('projector-mode-active');
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.classList.remove('projector-mode-active');
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.classList.remove('projector-mode-active');
+      document.body.style.overflow = '';
+    };
+  }, [isProjectorMode]);
+
   const getDynamicQrCodeValue = () => {
     if (!isSessionActive) return 'SESSION_PAUSED';
 
@@ -1194,12 +1273,16 @@ export default function AdminDashboard() {
 
               {/* Fullscreen Projector Mode Trigger */}
               <button
-                onClick={() => setIsProjectorMode(true)}
-                disabled={!isSessionActive}
-                className="w-full py-3 rounded-2xl text-xs font-bold bg-indigo-600/30 hover:bg-indigo-600/40 text-indigo-200 border border-indigo-500/50 shadow-[0_0_20px_rgba(99,102,241,0.3)] transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-40"
+                onClick={enterProjectorMode}
+                disabled={!isSessionActive || isSessionTerminated}
+                className="w-full py-3 rounded-2xl text-xs font-bold bg-indigo-600/30 hover:bg-indigo-600/40 text-indigo-200 border border-indigo-500/50 shadow-[0_0_20px_rgba(99,102,241,0.3)] transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-40 group"
+                title="Open Projector Mode (Press 'F')"
               >
-                <Maximize className="w-4 h-4 text-indigo-400" />
+                <Maximize className="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform" />
                 <span>Fullscreen Projector Mode</span>
+                <kbd className="hidden sm:inline-block px-1.5 py-0.5 rounded bg-indigo-950/80 border border-indigo-500/40 text-[10px] font-mono text-indigo-300 font-semibold shadow-inner">
+                  F
+                </kbd>
               </button>
 
               {/* Countdown Progress Ring */}
@@ -1677,13 +1760,16 @@ export default function AdminDashboard() {
       )}
 
       {/* FULLSCREEN PROJECTOR OVERLAY MODE */}
-      {isProjectorMode && (
-        <div className="fixed inset-0 z-[99999] bg-slate-950 flex flex-col items-center justify-center p-8 select-none">
+      {isProjectorMode && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[999999] w-screen h-screen bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-8 select-none overflow-hidden">
           <button
-            onClick={() => setIsProjectorMode(false)}
-            className="absolute top-6 right-6 p-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors cursor-pointer"
+            onClick={exitProjectorMode}
+            className="absolute top-6 right-6 px-3.5 py-2.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 transition-all cursor-pointer flex items-center gap-2 shadow-lg group"
+            title="Press 'Esc' or 'F' to exit fullscreen"
           >
-            <Minimize className="w-6 h-6" />
+            <Minimize className="w-5 h-5 text-cyan-400 group-hover:scale-110 transition-transform" />
+            <span className="text-xs font-mono font-semibold hidden sm:inline text-slate-300">Exit</span>
+            <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-600 text-[10px] font-mono text-cyan-300 hidden sm:inline">Esc / F</span>
           </button>
 
           <div className="space-y-6 text-center max-w-2xl w-full">
@@ -1717,7 +1803,8 @@ export default function AdminDashboard() {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* CREATE NEW SESSION MODAL */}
