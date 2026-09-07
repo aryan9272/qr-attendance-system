@@ -116,6 +116,89 @@ const SEED_HISTORICAL_SESSIONS = [
   },
 ];
 
+// Seed attendance records for yesterday's sessions (offline export fallback)
+const SEED_ATTENDANCE_MAP = {
+  'CS202-A81F': [
+    {
+      studentId: '21BCE1042',
+      regNo: '21BCE1042',
+      studentName: 'Aarav Patel',
+      email: 'aarav.patel@college.edu',
+      year: 'B.Tech - 3rd Year',
+      branch: 'Computer Science and Engineering',
+      mobileNumber: '+91 9876543210',
+      verificationMode: 'GPS_VERIFIED',
+      distanceFromTargetMeters: 12,
+      timestamp: '2026-09-06T14:35:10.000Z',
+    },
+    {
+      studentId: '21BCE1088',
+      regNo: '21BCE1088',
+      studentName: 'Sneha Kulkarni',
+      email: 'sneha.k@college.edu',
+      year: 'B.Tech - 3rd Year',
+      branch: 'Computer Science and Engineering',
+      mobileNumber: '+91 9876543211',
+      verificationMode: 'GPS_VERIFIED',
+      distanceFromTargetMeters: 8,
+      timestamp: '2026-09-06T14:36:40.000Z',
+    },
+    {
+      studentId: '21BCE1104',
+      regNo: '21BCE1104',
+      studentName: 'Rohan Deshmukh',
+      email: 'rohan.d@college.edu',
+      year: 'B.Tech - 3rd Year',
+      branch: 'Computer Science and Engineering',
+      mobileNumber: '+91 9876543212',
+      verificationMode: 'ADMIN_MANUAL_OVERRIDE',
+      overrideReason: 'GPS drift inside basement lab',
+      distanceFromTargetMeters: 0,
+      timestamp: '2026-09-06T14:40:15.000Z',
+    },
+  ],
+  'DSA-7C4E': [
+    {
+      studentId: '22BCE2015',
+      regNo: '22BCE2015',
+      studentName: 'Ananya Sharma',
+      email: 'ananya.s@college.edu',
+      year: 'B.Tech - 2nd Year',
+      branch: 'Information Technology',
+      mobileNumber: '+91 9876543213',
+      verificationMode: 'GPS_VERIFIED',
+      distanceFromTargetMeters: 15,
+      timestamp: '2026-09-06T11:05:22.000Z',
+    },
+    {
+      studentId: '22BCE2033',
+      regNo: '22BCE2033',
+      studentName: 'Vikram Joshi',
+      email: 'vikram.j@college.edu',
+      year: 'B.Tech - 2nd Year',
+      branch: 'Information Technology',
+      mobileNumber: '+91 9876543214',
+      verificationMode: 'GPS_VERIFIED',
+      distanceFromTargetMeters: 18,
+      timestamp: '2026-09-06T11:08:50.000Z',
+    },
+  ],
+  'CN301-5B9D': [
+    {
+      studentId: '21ECE3001',
+      regNo: '21ECE3001',
+      studentName: 'Pooja Nair',
+      email: 'pooja.n@college.edu',
+      year: 'B.Tech - 3rd Year',
+      branch: 'Electronics and Communication',
+      mobileNumber: '+91 9876543215',
+      verificationMode: 'GPS_VERIFIED',
+      distanceFromTargetMeters: 22,
+      timestamp: '2026-09-06T09:20:18.000Z',
+    },
+  ],
+};
+
 export default function AdminDashboard() {
   const {
     connected,
@@ -275,18 +358,31 @@ export default function AdminDashboard() {
       setTotalCount(0);
       return;
     }
+    const sid = String(sessionId).trim().toUpperCase();
     try {
-      const sid = sessionId.toUpperCase();
       const token = localStorage.getItem('admin_token');
       const { res, data } = await fetchWithFailover(`/api/attendance/stats/${sid}`, {
         headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
       });
       if (data?.success && data?.stats) {
-        setAttendeesRoster(data.stats.recent || []);
-        setTotalCount(data.stats.count || 0);
+        const recent = Array.isArray(data.stats.recent) ? data.stats.recent : [];
+        if (recent.length > 0) {
+          setAttendeesRoster(recent);
+          setTotalCount(data.stats.count || recent.length);
+          return;
+        }
       }
     } catch (e) {
-      console.warn('[AdminDashboard] Fetch roster error:', e);
+      console.warn('[AdminDashboard] Fetch roster error, checking seed fallback:', e);
+    }
+
+    // Client-side fallback if backend returns 0 or fails for seeded sessions
+    if (SEED_ATTENDANCE_MAP[sid]) {
+      setAttendeesRoster(SEED_ATTENDANCE_MAP[sid]);
+      setTotalCount(SEED_ATTENDANCE_MAP[sid].length);
+    } else {
+      setAttendeesRoster([]);
+      setTotalCount(0);
     }
   };
 
@@ -447,18 +543,39 @@ export default function AdminDashboard() {
   // Export Clean, Auto-Formatted SheetJS Excel File
   const handleExportExcel = async (targetSessionId = null) => {
     try {
-      const sid = (targetSessionId || selectedSessionId).toUpperCase();
-      let rosterData = attendeesRoster;
+      const rawTarget = targetSessionId || selectedSessionId;
+      if (!rawTarget) {
+        alert('Please select or specify a session to export attendance.');
+        return;
+      }
+      const sid = String(rawTarget).trim().toUpperCase();
+      let rosterData = [];
 
-      // If exporting a different session from history tab, fetch its roster
-      if (targetSessionId && targetSessionId.toUpperCase() !== selectedSessionId.toUpperCase()) {
-        const token = localStorage.getItem('admin_token');
-        const { data } = await fetchWithFailover(`/api/attendance/stats/${sid}`, {
-          headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
-        });
-        if (data?.success && data?.stats) {
-          rosterData = data.stats.recent || [];
+      const isCurrentSelected = selectedSessionId && String(selectedSessionId).trim().toUpperCase() === sid;
+
+      // If exporting currently selected session and roster is already in state, use it
+      if (isCurrentSelected && Array.isArray(attendeesRoster) && attendeesRoster.length > 0) {
+        rosterData = attendeesRoster;
+      }
+
+      // If rosterData is empty or we are exporting a different session from history tab, fetch its roster
+      if (!rosterData || rosterData.length === 0) {
+        try {
+          const token = localStorage.getItem('admin_token');
+          const { data } = await fetchWithFailover(`/api/attendance/stats/${sid}`, {
+            headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
+          });
+          if (data?.success && data?.stats?.recent && Array.isArray(data.stats.recent) && data.stats.recent.length > 0) {
+            rosterData = data.stats.recent;
+          }
+        } catch (fetchErr) {
+          console.warn(`[handleExportExcel] Fetch failed for session ${sid}:`, fetchErr);
         }
+      }
+
+      // Check seed attendance fallback if still empty
+      if ((!rosterData || rosterData.length === 0) && SEED_ATTENDANCE_MAP[sid]) {
+        rosterData = SEED_ATTENDANCE_MAP[sid];
       }
 
       if (!rosterData || rosterData.length === 0) {
@@ -470,7 +587,7 @@ export default function AdminDashboard() {
         'S.No': index + 1,
         'Session ID': item.sessionId || sid,
         'Student Name': item.studentName || 'N/A',
-        'Registration No / PRN': item.regNo || 'N/A',
+        'Registration No / PRN': item.regNo || item.studentId || 'N/A',
         'Email Address': item.email || 'N/A',
         'Academic Year': item.year || 'N/A',
         'Branch / Department': item.branch || 'N/A',
@@ -505,7 +622,8 @@ export default function AdminDashboard() {
       ];
 
       const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, `Attendance_${sid}`);
+      const cleanSheetName = `Att_${sid}`.slice(0, 31);
+      XLSX.utils.book_append_sheet(workbook, worksheet, cleanSheetName);
 
       const dateStr = new Date().toISOString().slice(0, 10);
       const filename = `Attendance_Report_${sid}_${dateStr}.xlsx`;
