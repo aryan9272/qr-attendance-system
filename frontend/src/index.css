@@ -105,3 +105,66 @@ body.projector-mode-active {
   overflow: hidden !important;
 }
 
+/* Modern Smooth Geofence Slider */
+.geofence-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 8px;
+  border-radius: 9999px;
+  outline: none;
+  cursor: grab;
+  touch-action: none;
+  transition: opacity 0.15s ease;
+}
+
+.geofence-slider:active {
+  cursor: grabbing;
+}
+
+.geofence-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #22d3ee;
+  border: 3px solid #0f172a;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.7);
+  cursor: grab;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.geofence-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.9);
+}
+
+.geofence-slider::-webkit-slider-thumb:active {
+  transform: scale(1.25);
+  cursor: grabbing;
+  box-shadow: 0 0 22px #22d3ee;
+}
+
+.geofence-slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #22d3ee;
+  border: 3px solid #0f172a;
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.7);
+  cursor: grab;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.geofence-slider::-moz-range-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.9);
+}
+
+.geofence-slider::-moz-range-thumb:active {
+  transform: scale(1.25);
+  cursor: grabbing;
+  box-shadow: 0 0 22px #22d3ee;
+}
+

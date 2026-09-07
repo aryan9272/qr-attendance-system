@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import * as XLSX from 'xlsx';
@@ -250,6 +250,8 @@ export default function AdminDashboard() {
   const [geofenceRadius, setGeofenceRadius] = useState(50);
   const [isGeofenceEnabled, setIsGeofenceEnabled] = useState(true);
   const [isCalibratingLocation, setIsCalibratingLocation] = useState(false);
+  const updateGeofenceTimerRef = useRef(null);
+  const isDraggingRadiusRef = useRef(false);
 
   // Fullscreen Projector Overlay Mode State
   const [isProjectorMode, setIsProjectorMode] = useState(false);
@@ -397,15 +399,50 @@ export default function AdminDashboard() {
     fetchRoster(selectedSessionId);
   }, [selectedSessionId, backendUrl]);
 
-  // Sync Geofence radius slider and bypass toggle with qrData
+  // Sync Geofence radius slider and bypass toggle with qrData (ignore while user is dragging)
   useEffect(() => {
-    if (qrData?.allowedRadiusMeters) {
+    if (qrData?.allowedRadiusMeters && !isDraggingRadiusRef.current) {
       setGeofenceRadius(qrData.allowedRadiusMeters);
     }
     if (typeof qrData?.geofenceEnabled === 'boolean') {
       setIsGeofenceEnabled(qrData.geofenceEnabled);
     }
   }, [qrData]);
+
+  const commitGeofenceRadius = (newRadius) => {
+    if (updateGeofenceTimerRef.current) {
+      clearTimeout(updateGeofenceTimerRef.current);
+      updateGeofenceTimerRef.current = null;
+    }
+    const r = Math.min(500, Math.max(30, Number(newRadius) || 50));
+    updateGeofence({
+      sessionId: selectedSessionId,
+      allowedRadiusMeters: r,
+      geofenceEnabled: isGeofenceEnabled,
+    });
+  };
+
+  const handleRadiusChange = (newRadius) => {
+    const raw = Number(newRadius);
+    if (isNaN(raw)) return;
+    const clamped = Math.min(500, Math.max(30, raw));
+    isDraggingRadiusRef.current = true;
+    setGeofenceRadius(clamped);
+
+    // Debounce live socket update so slider is ultra-smooth with 0 network jitter
+    if (updateGeofenceTimerRef.current) {
+      clearTimeout(updateGeofenceTimerRef.current);
+    }
+    updateGeofenceTimerRef.current = setTimeout(() => {
+      commitGeofenceRadius(clamped);
+      isDraggingRadiusRef.current = false;
+    }, 150);
+  };
+
+  const handleRadiusCommit = () => {
+    isDraggingRadiusRef.current = false;
+    commitGeofenceRadius(geofenceRadius);
+  };
 
   // Calibrate Classroom GPS using current admin device position
   const handleCalibrateLocation = () => {
@@ -1436,35 +1473,76 @@ export default function AdminDashboard() {
                 {/* Slider */}
                 <div className="space-y-3 font-mono text-xs">
                   <div className="flex justify-between items-center text-slate-300 text-[11px]">
-                    <span>Allowed Distance Boundary</span>
-                    <span className="text-cyan-400 font-bold">{geofenceRadius} meters</span>
+                    <span className="font-semibold">Allowed Distance Boundary</span>
+                    <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1 rounded-xl border border-slate-800 focus-within:border-cyan-500/60 transition-all shadow-sm">
+                      <input
+                        type="number"
+                        min="30"
+                        max="500"
+                        step="5"
+                        value={geofenceRadius}
+                        disabled={!isGeofenceEnabled}
+                        onChange={(e) => handleRadiusChange(e.target.value)}
+                        onBlur={handleRadiusCommit}
+                        className="w-12 bg-transparent text-cyan-400 font-bold font-mono text-xs text-right outline-none disabled:opacity-50"
+                      />
+                      <span className="text-cyan-400/80 font-mono text-xs font-semibold">meters</span>
+                    </div>
                   </div>
-                  <input
-                    type="range"
-                    min="30"
-                    max="500"
-                    step="10"
-                    value={geofenceRadius}
-                    disabled={!isGeofenceEnabled}
-                    onChange={(e) => {
-                      const r = Number(e.target.value);
-                      setGeofenceRadius(r);
-                      updateGeofence({
-                        sessionId: selectedSessionId,
-                        allowedRadiusMeters: r,
-                        geofenceEnabled: isGeofenceEnabled,
-                      });
-                    }}
-                    className={`w-full h-2 rounded-lg appearance-none cursor-pointer accent-cyan-400 ${
-                      isGeofenceEnabled ? 'bg-slate-900' : 'bg-slate-800 opacity-40 cursor-not-allowed'
-                    }`}
-                  />
 
-                  <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                    <span>30m (Lab)</span>
-                    <span>75m (Hall)</span>
-                    <span>200m (Wing)</span>
-                    <span>500m (Campus)</span>
+                  {/* Range Slider with dynamic filled gradient track */}
+                  <div className="relative py-1">
+                    <input
+                      type="range"
+                      min="30"
+                      max="500"
+                      step="5"
+                      value={geofenceRadius}
+                      disabled={!isGeofenceEnabled}
+                      onChange={(e) => handleRadiusChange(e.target.value)}
+                      onPointerUp={handleRadiusCommit}
+                      onMouseUp={handleRadiusCommit}
+                      onTouchEnd={handleRadiusCommit}
+                      style={{
+                        background: isGeofenceEnabled
+                          ? `linear-gradient(to right, #06b6d4 0%, #06b6d4 ${Math.min(100, Math.max(0, ((geofenceRadius - 30) / 470) * 100))}%, #1e293b ${Math.min(100, Math.max(0, ((geofenceRadius - 30) / 470) * 100))}%, #1e293b 100%)`
+                          : '#1e293b',
+                      }}
+                      className={`geofence-slider ${
+                        isGeofenceEnabled ? '' : 'opacity-40 cursor-not-allowed'
+                      }`}
+                    />
+                  </div>
+
+                  {/* Quick Select Preset Chips */}
+                  <div className="grid grid-cols-4 gap-2 pt-1">
+                    {[
+                      { val: 30, label: '30m', desc: 'Lab' },
+                      { val: 75, label: '75m', desc: 'Hall' },
+                      { val: 200, label: '200m', desc: 'Wing' },
+                      { val: 500, label: '500m', desc: 'Campus' },
+                    ].map((preset) => {
+                      const isSelected = geofenceRadius === preset.val;
+                      return (
+                        <button
+                          key={preset.val}
+                          type="button"
+                          disabled={!isGeofenceEnabled}
+                          onClick={() => {
+                            handleRadiusChange(preset.val);
+                            commitGeofenceRadius(preset.val);
+                          }}
+                          className={`py-1.5 px-1 rounded-xl text-[11px] font-mono border transition-all text-center cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                            isSelected
+                              ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200 font-bold shadow-[0_0_12px_rgba(6,182,212,0.3)] scale-[1.02]'
+                              : 'bg-slate-900/80 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          <span className="font-bold">{preset.label}</span>
+                          <span className="text-[9px] opacity-75 ml-1">({preset.desc})</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
