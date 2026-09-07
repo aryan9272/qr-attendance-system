@@ -688,7 +688,7 @@ exports.manualIntake = async (req, res) => {
     const cleanName = (studentName || '').trim();
 
     if (!cleanRegNo || !cleanName || !cleanEmail || !overrideReason) {
-      return res.status(400).json({ success: false, message: 'Full Name, PRN, Email, and Override Reason are required.' });
+      return res.status(400).json({ success: false, message: 'Full Name, Reg No, Email, and Override Reason are required.' });
     }
 
     // Check Duplicate Collision

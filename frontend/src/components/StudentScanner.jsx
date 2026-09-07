@@ -723,7 +723,7 @@ export default function StudentScanner() {
               <div className="space-y-1.5">
                 <label className="text-slate-300 font-semibold flex items-center gap-1.5">
                   <Hash className="w-3.5 h-3.5 text-cyan-400" />
-                  Registration Number / PRN
+                  Registration Number (Reg No)
                 </label>
                 <input
                   type="text"

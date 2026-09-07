@@ -60,7 +60,7 @@ export default function VerificationResultModal({ isOpen, onClose, result }) {
           {isSuccess && (
             <>
               <div className="flex justify-between py-1 border-b border-slate-800 text-slate-300">
-                <span className="text-slate-500">PRN / REG NO:</span>
+                <span className="text-slate-500">REG NO:</span>
                 <span className="font-bold text-cyan-300">
                   {result.data?.user || result.data?.regNo || result.attendance?.regNo || result.attendance?.studentId || result.regNo || 'VERIFIED'}
                 </span>

@@ -651,7 +651,7 @@ export default function AdminDashboard() {
         'S.No': index + 1,
         'Session ID': item.sessionId || sid,
         'Student Name': item.studentName || 'N/A',
-        'Registration No / PRN': item.regNo || item.studentId || 'N/A',
+        'Registration No': item.regNo || item.studentId || 'N/A',
         'Email Address': item.email || 'N/A',
         'Academic Year': item.year || 'N/A',
         'Branch / Department': item.branch || 'N/A',
@@ -675,7 +675,7 @@ export default function AdminDashboard() {
         { wch: 6 },  // S.No
         { wch: 16 }, // Session ID
         { wch: 24 }, // Student Name
-        { wch: 22 }, // Registration No / PRN
+        { wch: 22 }, // Registration No
         { wch: 32 }, // Email Address
         { wch: 16 }, // Academic Year
         { wch: 26 }, // Branch / Department
@@ -845,10 +845,10 @@ export default function AdminDashboard() {
   const openEditModal = (attendee) => {
     setEditingAttendee(attendee);
     setEditName(attendee.studentName || '');
-    setEditRegNo(attendee.regNo || '');
+    setEditRegNo(attendee.regNo || attendee.studentId || '');
     setEditEmail(attendee.email || '');
-    setEditYear(attendee.year || '');
-    setEditBranch(attendee.branch || '');
+    setEditYear(attendee.year || YEARS[0]);
+    setEditBranch(attendee.branch || DEPARTMENTS[0]);
     setEditPhone(attendee.mobileNumber || '');
     setEditReason('');
   };
@@ -1554,7 +1554,7 @@ export default function AdminDashboard() {
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search Name, PRN, Email..."
+                    placeholder="Search Name, Reg No, Email..."
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-xs font-mono"
                   />
                 </div>
@@ -1627,7 +1627,7 @@ export default function AdminDashboard() {
                   <tr className="bg-slate-900/90 text-slate-400 border-b border-slate-800">
                     <th className="p-4">#</th>
                     <th className="p-4">Student Name</th>
-                    <th className="p-4">PRN / Reg No</th>
+                    <th className="p-4">Reg No</th>
                     <th className="p-4">Email</th>
                     <th className="p-4">Year & Branch</th>
                     <th className="p-4">Distance</th>
@@ -2096,7 +2096,7 @@ export default function AdminDashboard() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-slate-300 font-semibold block">PRN / Reg No</label>
+                  <label className="text-slate-300 font-semibold block">Reg No</label>
                   <input
                     type="text"
                     value={manualRegNo}
@@ -2216,7 +2216,7 @@ export default function AdminDashboard() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-slate-300 font-semibold block">PRN / Reg No</label>
+                  <label className="text-slate-300 font-semibold block">Reg No</label>
                   <input
                     type="text"
                     value={editRegNo}
@@ -2238,13 +2238,50 @@ export default function AdminDashboard() {
                 />
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-slate-300 font-semibold block">Academic Year</label>
+                  <select
+                    value={editYear}
+                    onChange={(e) => setEditYear(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl glass-input text-slate-200"
+                  >
+                    {!YEARS.includes(editYear) && editYear && (
+                      <option value={editYear}>{editYear}</option>
+                    )}
+                    {YEARS.map((yr) => (
+                      <option key={yr} value={yr}>
+                        {yr}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-300 font-semibold block">Department Name</label>
+                  <select
+                    value={editBranch}
+                    onChange={(e) => setEditBranch(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl glass-input text-slate-200"
+                  >
+                    {!DEPARTMENTS.includes(editBranch) && editBranch && (
+                      <option value={editBranch}>{editBranch}</option>
+                    )}
+                    {DEPARTMENTS.map((dept) => (
+                      <option key={dept} value={dept}>
+                        {dept}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div className="space-y-1">
                 <label className="text-slate-300 font-semibold block">Mandatory Edit Reason</label>
                 <input
                   type="text"
                   value={editReason}
                   onChange={(e) => setEditReason(e.target.value)}
-                  placeholder="e.g. Typo in PRN, Wrong Department Selected"
+                  placeholder="e.g. Typo in Reg No, Wrong Department Selected"
                   required
                   className="w-full px-3 py-2 rounded-xl glass-input text-amber-300 font-bold"
                 />
