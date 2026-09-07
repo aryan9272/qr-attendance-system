@@ -464,12 +464,13 @@ export default function FacultyQRDisplay() {
                   <p className="text-xs text-slate-400 font-mono">Click "Start Session" in control panel to activate rotation loop.</p>
                 </div>
               ) : (
-                <div className="bg-white p-6 rounded-3xl shadow-2xl border-4 border-white">
+                <div className="bg-white p-5 sm:p-7 rounded-3xl shadow-2xl border-4 border-white flex items-center justify-center">
                   <QRCodeSVG
                     value={qrCodeValue}
-                    size={window.innerWidth < 640 ? 280 : 380}
+                    size={440}
                     level="H"
                     includeMargin={true}
+                    className="w-[280px] h-[280px] sm:w-[380px] sm:h-[380px] md:w-[440px] md:h-[440px] max-w-full aspect-square"
                   />
                 </div>
               )}
@@ -808,22 +809,23 @@ export default function FacultyQRDisplay() {
             </button>
           </div>
 
-          <div className="relative w-full max-w-sm p-6 bg-slate-950/90 rounded-3xl border-2 border-cyan-500/40 shadow-[0_0_40px_rgba(6,182,212,0.25)] flex flex-col items-center justify-center transition-transform hover:scale-[1.01]">
+          <div className="relative w-full max-w-md p-5 sm:p-6 bg-slate-950/90 rounded-3xl border-2 border-cyan-500/40 shadow-[0_0_45px_rgba(6,182,212,0.28)] flex flex-col items-center justify-center transition-transform hover:scale-[1.01]">
             <div className="scanline"></div>
 
             {!isSessionActive ? (
-              <div className="w-[260px] h-[260px] bg-slate-900 rounded-2xl flex flex-col items-center justify-center p-6 text-center space-y-3 border border-amber-500/30">
+              <div className="w-[260px] h-[260px] sm:w-[310px] sm:h-[310px] bg-slate-900 rounded-2xl flex flex-col items-center justify-center p-6 text-center space-y-3 border border-amber-500/30">
                 <Pause className="w-12 h-12 text-amber-400 animate-pulse" />
                 <h4 className="font-bold text-amber-300 font-display">SESSION PAUSED</h4>
                 <p className="text-[11px] text-slate-400 font-mono">Click "Start Session" above to activate 60s rotation loop.</p>
               </div>
             ) : (
-              <div className="bg-white p-4 rounded-2xl shadow-inner border border-white">
+              <div className="bg-white p-3.5 sm:p-4 rounded-2xl shadow-inner border-2 border-white flex items-center justify-center">
                 <QRCodeSVG
                   value={qrCodeValue}
-                  size={260}
+                  size={310}
                   level="H"
                   includeMargin={true}
+                  className="w-[260px] h-[260px] sm:w-[310px] sm:h-[310px] max-w-full aspect-square"
                 />
               </div>
             )}

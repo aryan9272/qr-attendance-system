@@ -1242,22 +1242,23 @@ export default function AdminDashboard() {
               </div>
 
               {/* QR Code Container */}
-              <div className="relative w-full max-w-sm p-6 bg-slate-950/90 rounded-3xl border-2 border-cyan-500/40 shadow-[0_0_40px_rgba(6,182,212,0.25)] flex flex-col items-center justify-center transition-transform hover:scale-[1.01]">
+              <div className="relative w-full max-w-md p-5 sm:p-6 bg-slate-950/90 rounded-3xl border-2 border-cyan-500/40 shadow-[0_0_45px_rgba(6,182,212,0.28)] flex flex-col items-center justify-center transition-transform hover:scale-[1.01]">
                 <div className="scanline"></div>
 
                 {!isSessionActive ? (
-                  <div className="w-[260px] h-[260px] bg-slate-900 rounded-2xl flex flex-col items-center justify-center p-6 text-center space-y-3 border border-amber-500/30">
+                  <div className="w-[260px] h-[260px] sm:w-[310px] sm:h-[310px] bg-slate-900 rounded-2xl flex flex-col items-center justify-center p-6 text-center space-y-3 border border-amber-500/30">
                     <Pause className="w-12 h-12 text-amber-400 animate-pulse" />
                     <h4 className="font-bold text-amber-300 font-display">SESSION PAUSED</h4>
                     <p className="text-[11px] text-slate-400 font-mono">Click "Start Session" above to activate 60s rotation loop.</p>
                   </div>
                 ) : (
-                  <div className="bg-white p-4 rounded-2xl shadow-inner border border-white">
+                  <div className="bg-white p-3.5 sm:p-4 rounded-2xl shadow-inner border-2 border-white flex items-center justify-center">
                     <QRCodeSVG
                       value={qrCodeValue}
-                      size={260}
+                      size={310}
                       level="H"
                       includeMargin={true}
+                      className="w-[260px] h-[260px] sm:w-[310px] sm:h-[310px] max-w-full aspect-square"
                     />
                   </div>
                 )}
@@ -1761,7 +1762,7 @@ export default function AdminDashboard() {
 
       {/* FULLSCREEN PROJECTOR OVERLAY MODE */}
       {isProjectorMode && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[999999] w-screen h-screen bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-8 select-none overflow-hidden">
+        <div className="fixed inset-0 z-[999999] w-screen h-screen bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-8 select-none overflow-y-auto">
           <button
             onClick={exitProjectorMode}
             className="absolute top-6 right-6 px-3.5 py-2.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 transition-all cursor-pointer flex items-center gap-2 shadow-lg group"
@@ -1782,8 +1783,14 @@ export default function AdminDashboard() {
               </h1>
             </div>
 
-            <div className="bg-white p-8 rounded-3xl shadow-[0_0_80px_rgba(6,182,212,0.4)] inline-block border-4 border-cyan-400">
-              <QRCodeSVG value={qrCodeValue} size={380} level="H" includeMargin={true} />
+            <div className="bg-white p-5 sm:p-7 rounded-3xl shadow-[0_0_90px_rgba(6,182,212,0.5)] inline-block border-4 border-cyan-400 transition-transform hover:scale-[1.01]">
+              <QRCodeSVG
+                value={qrCodeValue}
+                size={460}
+                level="H"
+                includeMargin={true}
+                className="w-[280px] h-[280px] sm:w-[380px] sm:h-[380px] md:w-[460px] md:h-[460px] max-w-full aspect-square"
+              />
             </div>
 
             <div className="text-cyan-400 font-mono font-bold text-base tracking-widest">
