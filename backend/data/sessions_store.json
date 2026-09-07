@@ -1,0 +1,53 @@
+[
+  {
+    "sessionId": "CS202-A81F",
+    "labIdentifier": "OS-LAB",
+    "title": "CS202: Advanced Operating Systems Lab",
+    "proctorName": "Prof. Sharma",
+    "presenterName": "Prof. Sharma",
+    "status": "TERMINATED",
+    "isEnded": true,
+    "allowedRadiusMeters": 50,
+    "customFields": {
+      "requireMobileNumber": true,
+      "requireWifiVerification": false
+    },
+    "createdAt": "2026-09-06T14:30:00.000Z",
+    "endedAt": "2026-09-06T16:30:00.000Z",
+    "terminatedAt": "2026-09-06T16:30:00.000Z"
+  },
+  {
+    "sessionId": "DSA-7C4E",
+    "labIdentifier": "DSA-LAB",
+    "title": "Data Structures and Algorithms Practical",
+    "proctorName": "Dr. Verma",
+    "presenterName": "Dr. Verma",
+    "status": "TERMINATED",
+    "isEnded": true,
+    "allowedRadiusMeters": 50,
+    "customFields": {
+      "requireMobileNumber": false,
+      "requireWifiVerification": false
+    },
+    "createdAt": "2026-09-06T11:00:00.000Z",
+    "endedAt": "2026-09-06T12:45:00.000Z",
+    "terminatedAt": "2026-09-06T12:45:00.000Z"
+  },
+  {
+    "sessionId": "CN301-5B9D",
+    "labIdentifier": "CN-LAB",
+    "title": "Computer Networks Lab Session",
+    "proctorName": "Faculty In-Charge",
+    "presenterName": "Faculty In-Charge",
+    "status": "TERMINATED",
+    "isEnded": true,
+    "allowedRadiusMeters": 60,
+    "customFields": {
+      "requireMobileNumber": false,
+      "requireWifiVerification": false
+    },
+    "createdAt": "2026-09-06T09:15:00.000Z",
+    "endedAt": "2026-09-06T10:45:00.000Z",
+    "terminatedAt": "2026-09-06T10:45:00.000Z"
+  }
+]

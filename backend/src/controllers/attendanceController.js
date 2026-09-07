@@ -4,6 +4,7 @@ const { activeSessions, startSession, pauseSession, terminateSession, rotateToke
 const Event = require('../models/Event');
 const Attendance = require('../models/Attendance');
 const { getIsConnected } = require('../config/db');
+const storageService = require('../services/storageService');
 
 /**
  * Generate Unique Session ID: [SanitizedLabCode]-[RandomNanoID]
@@ -18,6 +19,7 @@ async function generateUniqueSessionId(labIdentifier) {
   let sessionId = '';
   let exists = true;
   let attempts = 0;
+  const storedSessions = storageService.loadSessions();
 
   while (exists && attempts < 20) {
     attempts++;
@@ -25,6 +27,10 @@ async function generateUniqueSessionId(labIdentifier) {
     sessionId = `${cleanLab}-${randomSuffix}`;
 
     if (activeSessions.has(sessionId)) {
+      continue;
+    }
+
+    if (storedSessions.some((s) => s.sessionId === sessionId)) {
       continue;
     }
 
@@ -111,21 +117,45 @@ exports.verifyAttendance = async (req, res) => {
       });
     }
 
-    // 2. Check Session State in Memory / Database
+    // 2. Check Session State in Memory / Database / Local File Storage
     let session = activeSessions.get(targetSessionId);
+    if (!session && getIsConnected()) {
+      try {
+        const dbEvent = await Event.findOne({ sessionId: targetSessionId });
+        if (dbEvent) {
+          session = {
+            sessionId: dbEvent.sessionId,
+            labIdentifier: dbEvent.labIdentifier,
+            title: dbEvent.title,
+            proctorName: dbEvent.proctorName,
+            presenterName: dbEvent.presenterName,
+            latitude: 28.6139,
+            longitude: 77.2090,
+            allowedRadiusMeters: dbEvent.allowedRadiusMeters || 50,
+            status: dbEvent.status,
+            isEnded: dbEvent.isEnded,
+            customFields: dbEvent.customFields,
+          };
+          activeSessions.set(targetSessionId, session);
+        }
+      } catch (e) {}
+    }
+
     if (!session) {
-      const dbEvent = await Event.findOne({ sessionId: targetSessionId });
-      if (dbEvent) {
+      const stored = storageService.loadSessions().find((s) => s.sessionId === targetSessionId);
+      if (stored) {
         session = {
-          sessionId: dbEvent.sessionId,
-          labIdentifier: dbEvent.labIdentifier,
-          title: dbEvent.title,
-          latitude: 28.6139,
-          longitude: 77.2090,
-          allowedRadiusMeters: dbEvent.allowedRadiusMeters || 50,
-          status: dbEvent.status,
-          isEnded: dbEvent.isEnded,
-          customFields: dbEvent.customFields,
+          sessionId: stored.sessionId,
+          labIdentifier: stored.labIdentifier,
+          title: stored.title,
+          proctorName: stored.proctorName,
+          presenterName: stored.presenterName,
+          latitude: stored.latitude || 28.6139,
+          longitude: stored.longitude || 77.2090,
+          allowedRadiusMeters: stored.allowedRadiusMeters || 50,
+          status: stored.status,
+          isEnded: stored.isEnded,
+          customFields: stored.customFields,
         };
         activeSessions.set(targetSessionId, session);
       }
@@ -175,10 +205,24 @@ exports.verifyAttendance = async (req, res) => {
     }
 
     // 4. Anti-Proxy Lock: Check Duplicate Student Record or Rapid IP Submission
-    const existingStudent = await Attendance.findOne({
-      sessionId: targetSessionId,
-      $or: [{ regNo: cleanRegNo }, { email: cleanEmail }],
-    });
+    let existingStudent = null;
+    if (getIsConnected()) {
+      try {
+        existingStudent = await Attendance.findOne({
+          sessionId: targetSessionId,
+          $or: [{ regNo: cleanRegNo }, { email: cleanEmail }],
+        });
+      } catch (e) {}
+    }
+
+    if (!existingStudent) {
+      const storedAtt = storageService.getAttendanceBySession(targetSessionId);
+      existingStudent = storedAtt.find(
+        (a) =>
+          (a.regNo && a.regNo.toUpperCase() === cleanRegNo) ||
+          (a.email && a.email.toLowerCase() === cleanEmail)
+      );
+    }
 
     if (existingStudent) {
       return res.status(409).json({
@@ -192,11 +236,16 @@ exports.verifyAttendance = async (req, res) => {
     const clientIp = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
     const userAgent = req.headers['user-agent'] || '';
 
-    const recentIpRecord = await Attendance.findOne({
-      sessionId: targetSessionId,
-      clientIp,
-      timestamp: { $gte: new Date(Date.now() - 5000) }, // Within last 5 seconds
-    });
+    let recentIpRecord = null;
+    if (getIsConnected()) {
+      try {
+        recentIpRecord = await Attendance.findOne({
+          sessionId: targetSessionId,
+          clientIp,
+          timestamp: { $gte: new Date(Date.now() - 5000) },
+        });
+      } catch (e) {}
+    }
 
     let verificationMode = 'GPS_VERIFIED';
     if (recentIpRecord) {
@@ -204,8 +253,8 @@ exports.verifyAttendance = async (req, res) => {
       console.warn(`[Anti-Proxy Sentinel] Flagged SUSPICIOUS_PROXY for ${cleanRegNo} from IP ${clientIp}`);
     }
 
-    // 5. Save Record to Database
-    const attendanceDoc = await Attendance.create({
+    // 5. Save Record to Database and Local File Storage
+    const attData = {
       sessionId: targetSessionId,
       studentId: cleanRegNo,
       regNo: cleanRegNo,
@@ -220,8 +269,23 @@ exports.verifyAttendance = async (req, res) => {
       deviceUuid: deviceUuid || '',
       clientIp,
       userAgent,
-      timestamp: new Date(),
-    });
+      timestamp: new Date().toISOString(),
+    };
+
+    let attendanceDoc = null;
+    if (getIsConnected()) {
+      try {
+        attendanceDoc = await Attendance.create(attData);
+      } catch (e) {
+        console.warn('[verifyAttendance] DB save error, saving to file storage:', e.message);
+      }
+    }
+
+    if (!attendanceDoc) {
+      attendanceDoc = storageService.saveAttendance(attData);
+    } else {
+      storageService.saveAttendance(attendanceDoc.toObject ? attendanceDoc.toObject() : attendanceDoc);
+    }
 
     // 6. Broadcast Real-Time Attendee Event to Active Session Room
     if (req.io) {
@@ -318,8 +382,10 @@ exports.createSession = async (req, res) => {
       labIdentifier: cleanLab,
       title: cleanTitle,
       proctorName: facultyName,
+      presenterName: facultyName,
       status: 'PAUSED',
       allowedRadiusMeters: 50,
+      createdAt: new Date().toISOString(),
       customFields: customFields || { requireMobileNumber: false, requireWifiVerification: false },
     };
 
@@ -334,12 +400,16 @@ exports.createSession = async (req, res) => {
       }
     }
 
+    // Always persist to local file storage!
+    storageService.saveSession(eventData);
+
     // Initialize in Socket.IO activeSessions memory
     activeSessions.set(sessionId, {
       sessionId: eventData.sessionId,
       labIdentifier: eventData.labIdentifier,
       title: eventData.title,
       proctorName: eventData.proctorName,
+      presenterName: eventData.presenterName,
       latitude: 28.6139,
       longitude: 77.2090,
       allowedRadiusMeters: 50,
@@ -350,6 +420,7 @@ exports.createSession = async (req, res) => {
       qrUrl: null,
       tokenCreatedAt: Date.now(),
       status: 'PAUSED',
+      createdAt: eventData.createdAt,
       customFields: eventData.customFields,
     });
 
@@ -377,10 +448,13 @@ exports.deleteSession = async (req, res) => {
     }
 
     if (getIsConnected()) {
-      await Event.deleteOne({ sessionId });
-      await Attendance.deleteMany({ sessionId });
+      try {
+        await Event.deleteOne({ sessionId });
+        await Attendance.deleteMany({ sessionId });
+      } catch (e) {}
     }
     activeSessions.delete(sessionId);
+    storageService.deleteSession(sessionId);
 
     return res.json({
       success: true,
@@ -409,12 +483,15 @@ exports.startSession = async (req, res) => {
     }
 
     if (getIsConnected()) {
-      const dbEvent = await Event.findOne({ sessionId: targetId });
-      if (dbEvent && dbEvent.status === 'TERMINATED') {
-        return res.status(400).json({ success: false, message: 'This session has been permanently terminated and cannot be restarted.' });
-      }
+      try {
+        const dbEvent = await Event.findOne({ sessionId: targetId });
+        if (dbEvent && dbEvent.status === 'TERMINATED') {
+          return res.status(400).json({ success: false, message: 'This session has been permanently terminated and cannot be restarted.' });
+        }
+      } catch (e) {}
     }
 
+    storageService.updateSession(targetId, { status: 'ACTIVE' });
     startSession(req.io, targetId);
 
     return res.json({ success: true, message: `Session ${targetId} started/resumed.` });
@@ -434,6 +511,7 @@ exports.pauseSession = async (req, res) => {
     }
     const targetId = String(sessionId).trim().toUpperCase();
 
+    storageService.updateSession(targetId, { status: 'PAUSED' });
     pauseSession(req.io, targetId);
 
     return res.json({ success: true, message: `Session ${targetId} paused.` });
@@ -455,20 +533,29 @@ exports.terminateSession = async (req, res) => {
     const endedAt = new Date();
 
     if (getIsConnected()) {
-      // Explicitly update document in MongoDB to: { status: "TERMINATED", isEnded: true, endedAt: new Date() }
-      // Do NOT set or leave status as "PAUSED".
-      await Event.updateOne(
-        { sessionId: targetId },
-        {
-          $set: {
-            status: 'TERMINATED',
-            isEnded: true,
-            endedAt: endedAt,
-            terminatedAt: endedAt,
-          },
-        }
-      ).catch((err) => console.warn('Mongo terminate update warning:', err));
+      try {
+        await Event.updateOne(
+          { sessionId: targetId },
+          {
+            $set: {
+              status: 'TERMINATED',
+              isEnded: true,
+              endedAt: endedAt,
+              terminatedAt: endedAt,
+            },
+          }
+        );
+      } catch (err) {
+        console.warn('Mongo terminate update warning:', err);
+      }
     }
+
+    storageService.updateSession(targetId, {
+      status: 'TERMINATED',
+      isEnded: true,
+      endedAt: endedAt.toISOString(),
+      terminatedAt: endedAt.toISOString(),
+    });
 
     terminateSession(req.io, targetId);
 
@@ -502,16 +589,30 @@ exports.manualIntake = async (req, res) => {
     }
 
     // Check Duplicate Collision
-    const existing = await Attendance.findOne({
-      sessionId: targetSessionId,
-      $or: [{ regNo: cleanRegNo }, { email: cleanEmail }],
-    });
+    let existing = null;
+    if (getIsConnected()) {
+      try {
+        existing = await Attendance.findOne({
+          sessionId: targetSessionId,
+          $or: [{ regNo: cleanRegNo }, { email: cleanEmail }],
+        });
+      } catch (e) {}
+    }
+
+    if (!existing) {
+      const storedAtt = storageService.getAttendanceBySession(targetSessionId);
+      existing = storedAtt.find(
+        (a) =>
+          (a.regNo && a.regNo.toUpperCase() === cleanRegNo) ||
+          (a.email && a.email.toLowerCase() === cleanEmail)
+      );
+    }
 
     if (existing) {
       return res.status(409).json({ success: false, message: `Attendance already recorded for ${cleanRegNo}.` });
     }
 
-    const attendanceDoc = await Attendance.create({
+    const attData = {
       sessionId: targetSessionId,
       studentId: cleanRegNo,
       regNo: cleanRegNo,
@@ -525,8 +626,21 @@ exports.manualIntake = async (req, res) => {
       editedBy: req.admin?.email || 'Admin',
       editedAt: new Date(),
       distanceFromTargetMeters: 0,
-      timestamp: new Date(),
-    });
+      timestamp: new Date().toISOString(),
+    };
+
+    let attendanceDoc = null;
+    if (getIsConnected()) {
+      try {
+        attendanceDoc = await Attendance.create(attData);
+      } catch (e) {}
+    }
+
+    if (!attendanceDoc) {
+      attendanceDoc = storageService.saveAttendance(attData);
+    } else {
+      storageService.saveAttendance(attendanceDoc.toObject ? attendanceDoc.toObject() : attendanceDoc);
+    }
 
     if (req.io) {
       req.io.to(`session:${targetSessionId}`).emit('new_attendee', {
@@ -557,37 +671,60 @@ exports.updateAttendee = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Mandatory Edit Reason is required.' });
     }
 
-    const record = await Attendance.findById(id);
+    let record = null;
+    if (getIsConnected()) {
+      try {
+        record = await Attendance.findById(id);
+      } catch (e) {}
+    }
+
+    if (record) {
+      // Save previous values in audit history
+      const previousValues = {
+        studentName: record.studentName,
+        regNo: record.regNo,
+        email: record.email,
+        year: record.year,
+        branch: record.branch,
+        mobileNumber: record.mobileNumber,
+      };
+
+      if (studentName) record.studentName = studentName.trim();
+      if (regNo) record.regNo = regNo.trim().toUpperCase();
+      if (email) record.email = email.trim().toLowerCase();
+      if (year !== undefined) record.year = year;
+      if (branch !== undefined) record.branch = branch;
+      if (mobileNumber !== undefined) record.mobileNumber = mobileNumber;
+
+      record.editedBy = req.admin?.email || 'Admin';
+      record.editedAt = new Date();
+      if (!Array.isArray(record.editHistory)) record.editHistory = [];
+      record.editHistory.push({
+        previousValues,
+        reason: editReason.trim(),
+        editedAt: new Date(),
+      });
+
+      await record.save();
+      storageService.updateAttendeeRecord(id, record.toObject ? record.toObject() : record);
+    } else {
+      // Update in storageService
+      record = storageService.updateAttendeeRecord(id, {
+        ...(studentName ? { studentName: studentName.trim() } : {}),
+        ...(regNo ? { regNo: regNo.trim().toUpperCase(), studentId: regNo.trim().toUpperCase() } : {}),
+        ...(email ? { email: email.trim().toLowerCase() } : {}),
+        ...(year !== undefined ? { year } : {}),
+        ...(branch !== undefined ? { branch } : {}),
+        ...(mobileNumber !== undefined ? { mobileNumber } : {}),
+        editedBy: req.admin?.email || 'Admin',
+        editedAt: new Date().toISOString(),
+        editReason: editReason.trim(),
+      });
+    }
+
     if (!record) {
       return res.status(404).json({ success: false, message: 'Attendee record not found.' });
     }
-
-    // Save previous values in audit history
-    const previousValues = {
-      studentName: record.studentName,
-      regNo: record.regNo,
-      email: record.email,
-      year: record.year,
-      branch: record.branch,
-      mobileNumber: record.mobileNumber,
-    };
-
-    if (studentName) record.studentName = studentName.trim();
-    if (regNo) record.regNo = regNo.trim().toUpperCase();
-    if (email) record.email = email.trim().toLowerCase();
-    if (year !== undefined) record.year = year;
-    if (branch !== undefined) record.branch = branch;
-    if (mobileNumber !== undefined) record.mobileNumber = mobileNumber;
-
-    record.editedBy = req.admin?.email || 'Admin';
-    record.editedAt = new Date();
-    record.editHistory.push({
-      previousValues,
-      reason: editReason.trim(),
-      editedAt: new Date(),
-    });
-
-    await record.save();
 
     if (req.io) {
       req.io.to(`session:${record.sessionId}`).emit('attendee_updated', {
@@ -611,17 +748,46 @@ exports.updateAttendee = async (req, res) => {
  */
 exports.getSessionHistory = async (req, res) => {
   try {
-    const sessions = await Event.find().sort({ createdAt: -1 });
+    let dbEvents = [];
+    if (getIsConnected()) {
+      try {
+        dbEvents = await Event.find().sort({ createdAt: -1 });
+      } catch (e) {}
+    }
+
+    const storedSessions = storageService.loadSessions();
+    const eventMap = new Map();
+    storedSessions.forEach((s) => eventMap.set(s.sessionId, s));
+    dbEvents.forEach((e) => {
+      const obj = e.toObject ? e.toObject() : e;
+      eventMap.set(obj.sessionId, { ...eventMap.get(obj.sessionId), ...obj });
+    });
+
+    const sessions = Array.from(eventMap.values());
 
     const sessionStats = await Promise.all(
       sessions.map(async (sess) => {
-        const totalAttendees = await Attendance.countDocuments({ sessionId: sess.sessionId });
-        const manualOverrides = await Attendance.countDocuments({
-          sessionId: sess.sessionId,
-          verificationMode: 'ADMIN_MANUAL_OVERRIDE',
-        });
+        let totalAttendees = sess.totalAttendees || 0;
+        let manualOverrides = 0;
+
+        if (getIsConnected()) {
+          try {
+            totalAttendees = await Attendance.countDocuments({ sessionId: sess.sessionId });
+            manualOverrides = await Attendance.countDocuments({
+              sessionId: sess.sessionId,
+              verificationMode: 'ADMIN_MANUAL_OVERRIDE',
+            });
+          } catch (e) {}
+        }
+
+        if (totalAttendees === 0) {
+          const fileAtt = storageService.getAttendanceBySession(sess.sessionId);
+          totalAttendees = fileAtt.length;
+          manualOverrides = fileAtt.filter((a) => a.verificationMode === 'ADMIN_MANUAL_OVERRIDE').length;
+        }
+
         return {
-          ...sess.toObject(),
+          ...sess,
           totalAttendees,
           manualOverrides,
         };
@@ -637,8 +803,6 @@ exports.getSessionHistory = async (req, res) => {
   }
 };
 
-
-
 /**
  * Public / Admin: Get Current Active Session
  * Strictly filters by active/paused non-ended status.
@@ -649,14 +813,16 @@ exports.getActiveSession = async (req, res) => {
     let session = null;
 
     if (getIsConnected()) {
-      const dbSession = await Event.findOne({
-        status: { $in: ['ACTIVE', 'PAUSED'] },
-        isEnded: { $ne: true },
-      }).sort({ createdAt: -1 });
+      try {
+        const dbSession = await Event.findOne({
+          status: { $in: ['ACTIVE', 'PAUSED'] },
+          isEnded: { $ne: true },
+        }).sort({ createdAt: -1 });
 
-      if (dbSession && dbSession.status !== 'TERMINATED' && !dbSession.isEnded) {
-        session = dbSession.toObject ? dbSession.toObject() : dbSession;
-      }
+        if (dbSession && dbSession.status !== 'TERMINATED' && !dbSession.isEnded) {
+          session = dbSession.toObject ? dbSession.toObject() : dbSession;
+        }
+      } catch (e) {}
     }
 
     // In-memory fallback if DB not connected or no DB session
@@ -669,6 +835,16 @@ exports.getActiveSession = async (req, res) => {
           (a, b) => new Date(b.createdAt || Date.now()) - new Date(a.createdAt || Date.now())
         );
         session = memSessions[0];
+      }
+    }
+
+    // StorageService fallback
+    if (!session) {
+      const stored = storageService.loadSessions().filter(
+        (s) => (s.status === 'ACTIVE' || s.status === 'PAUSED') && !s.isEnded && s.status !== 'TERMINATED'
+      );
+      if (stored.length > 0) {
+        session = stored[0];
       }
     }
 
@@ -689,30 +865,42 @@ exports.getEvents = async (req, res) => {
   try {
     let dbEvents = [];
     if (getIsConnected()) {
-      dbEvents = await Event.find().sort({ createdAt: -1 });
+      try {
+        dbEvents = await Event.find().sort({ createdAt: -1 });
+      } catch (e) {
+        console.warn('DB getEvents error:', e.message);
+      }
     }
 
+    // Load file-stored sessions (includes yesterday's 2026-09-06 seeds and all created sessions)
+    const storedSessions = storageService.loadSessions();
     const memoryEvents = Array.from(activeSessions.values());
 
     const eventMap = new Map();
-    // 1. Put DB events into map first
-    dbEvents.forEach((e) => {
-      const obj = e.toObject ? e.toObject() : e;
-      eventMap.set(obj.sessionId, obj);
+
+    // 1. Put stored sessions into map first
+    storedSessions.forEach((s) => {
+      eventMap.set(s.sessionId, s);
     });
 
-    // 2. Merge memory events, ensuring TERMINATED/isEnded in DB is never overwritten with PAUSED
+    // 2. Overlay DB events if any
+    dbEvents.forEach((e) => {
+      const obj = e.toObject ? e.toObject() : e;
+      eventMap.set(obj.sessionId, { ...eventMap.get(obj.sessionId), ...obj });
+    });
+
+    // 3. Merge memory events, ensuring TERMINATED/isEnded in DB or storage is never overwritten with PAUSED
     memoryEvents.forEach((s) => {
       if (!eventMap.has(s.sessionId)) {
         eventMap.set(s.sessionId, s);
       } else {
-        const dbObj = eventMap.get(s.sessionId);
-        if (dbObj.status === 'TERMINATED' || dbObj.isEnded) {
+        const existing = eventMap.get(s.sessionId);
+        if (existing.status === 'TERMINATED' || existing.isEnded) {
           s.status = 'TERMINATED';
           s.isEnded = true;
-          eventMap.set(s.sessionId, { ...s, ...dbObj, status: 'TERMINATED', isEnded: true });
+          eventMap.set(s.sessionId, { ...s, ...existing, status: 'TERMINATED', isEnded: true });
         } else {
-          eventMap.set(s.sessionId, { ...dbObj, ...s });
+          eventMap.set(s.sessionId, { ...existing, ...s });
         }
       }
     });
@@ -732,21 +920,41 @@ exports.getEvents = async (req, res) => {
       return 0;
     };
 
-    const events = Array.from(eventMap.values())
-      .map((item) => {
+    const allEvents = Array.from(eventMap.values());
+
+    // Calculate totalAttendees for each event so history tab displays attendee count accurately
+    const events = await Promise.all(
+      allEvents.map(async (item) => {
         const ts = getTs(item);
+        let totalAttendees = item.totalAttendees || 0;
+
+        if (getIsConnected()) {
+          try {
+            totalAttendees = await Attendance.countDocuments({ sessionId: item.sessionId });
+          } catch (e) {}
+        }
+
+        if (totalAttendees === 0) {
+          const fileAtt = storageService.getAttendanceBySession(item.sessionId);
+          totalAttendees = fileAtt.length;
+        }
+
         return {
           ...item,
+          totalAttendees,
           createdAt: item.createdAt || (ts > 0 ? new Date(ts).toISOString() : new Date().toISOString()),
         };
       })
-      .sort((a, b) => getTs(b) - getTs(a));
+    );
+
+    events.sort((a, b) => getTs(b) - getTs(a));
+
     return res.json({ success: true, events });
   } catch (err) {
-    const memoryEvents = Array.from(activeSessions.values());
+    const fallback = storageService.loadSessions();
     return res.json({
       success: true,
-      events: memoryEvents,
+      events: fallback,
     });
   }
 };
@@ -766,8 +974,16 @@ exports.getAttendanceStats = async (req, res) => {
     let recent = [];
 
     if (getIsConnected()) {
-      count = await Attendance.countDocuments({ sessionId: targetSessionId });
-      recent = await Attendance.find({ sessionId: targetSessionId }).sort({ timestamp: -1 }).limit(200);
+      try {
+        count = await Attendance.countDocuments({ sessionId: targetSessionId });
+        recent = await Attendance.find({ sessionId: targetSessionId }).sort({ timestamp: -1 }).limit(200);
+      } catch (e) {}
+    }
+
+    if (count === 0 && (!recent || recent.length === 0)) {
+      const fileAtt = storageService.getAttendanceBySession(targetSessionId);
+      count = fileAtt.length;
+      recent = fileAtt.slice(0, 200);
     }
 
     return res.json({
@@ -778,11 +994,12 @@ exports.getAttendanceStats = async (req, res) => {
       },
     });
   } catch (err) {
+    const fileAtt = storageService.getAttendanceBySession(req.params.eventId);
     return res.json({
       success: true,
       stats: {
-        count: 0,
-        recent: [],
+        count: fileAtt.length,
+        recent: fileAtt.slice(0, 200),
       },
     });
   }

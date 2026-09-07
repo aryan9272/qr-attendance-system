@@ -4,6 +4,7 @@ const Event = require('../models/Event');
 const Attendance = require('../models/Attendance');
 
 const { getIsConnected } = require('../config/db');
+const storageService = require('./storageService');
 
 function getLocalNetworkIp() {
   if (process.env.SERVER_IP) return process.env.SERVER_IP;
@@ -107,6 +108,37 @@ function initSocketService(io) {
             activeSessions.set(sessionId, session);
           }
         } catch (e) {}
+      }
+
+      // If still not in memory, try loading from local storageService
+      if (!session) {
+        const storedSessions = storageService.loadSessions();
+        const stored = storedSessions.find((s) => s.sessionId === sessionId);
+        if (stored) {
+          session = {
+            sessionId: stored.sessionId,
+            labIdentifier: stored.labIdentifier,
+            title: stored.title,
+            proctorName: stored.proctorName,
+            presenterName: stored.presenterName,
+            latitude: stored.latitude || 28.6139,
+            longitude: stored.longitude || 77.2090,
+            allowedRadiusMeters: stored.allowedRadiusMeters || 50,
+            tokenValiditySeconds: 60,
+            currentCountdown: 60,
+            currentToken: null,
+            previousToken: null,
+            qrUrl: null,
+            tokenCreatedAt: Date.now(),
+            status: stored.status || 'TERMINATED',
+            isEnded: !!stored.isEnded,
+            endedAt: stored.endedAt,
+            terminatedAt: stored.terminatedAt,
+            createdAt: stored.createdAt,
+            customFields: stored.customFields || { requireMobileNumber: false, requireWifiVerification: false },
+          };
+          activeSessions.set(sessionId, session);
+        }
       }
 
       // If session does not exist, return NO_ACTIVE_SESSION

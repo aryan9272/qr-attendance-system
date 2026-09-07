@@ -70,6 +70,52 @@ const OVERRIDE_REASONS = [
   'Other Administrative Reason',
 ];
 
+// Default seeded sessions from yesterday (2026-09-06) for instant offline history display
+const SEED_HISTORICAL_SESSIONS = [
+  {
+    sessionId: 'CS202-A81F',
+    labIdentifier: 'OS-LAB',
+    title: 'CS202: Advanced Operating Systems Lab',
+    proctorName: 'Prof. Sharma',
+    presenterName: 'Prof. Sharma',
+    totalAttendees: 3,
+    status: 'TERMINATED',
+    isEnded: true,
+    allowedRadiusMeters: 50,
+    createdAt: '2026-09-06T14:30:00.000Z',
+    endedAt: '2026-09-06T16:30:00.000Z',
+    terminatedAt: '2026-09-06T16:30:00.000Z',
+  },
+  {
+    sessionId: 'DSA-7C4E',
+    labIdentifier: 'DSA-LAB',
+    title: 'Data Structures and Algorithms Practical',
+    proctorName: 'Dr. Verma',
+    presenterName: 'Dr. Verma',
+    totalAttendees: 2,
+    status: 'TERMINATED',
+    isEnded: true,
+    allowedRadiusMeters: 50,
+    createdAt: '2026-09-06T11:00:00.000Z',
+    endedAt: '2026-09-06T12:45:00.000Z',
+    terminatedAt: '2026-09-06T12:45:00.000Z',
+  },
+  {
+    sessionId: 'CN301-5B9D',
+    labIdentifier: 'CN-LAB',
+    title: 'Computer Networks Lab Session',
+    proctorName: 'Faculty In-Charge',
+    presenterName: 'Faculty In-Charge',
+    totalAttendees: 1,
+    status: 'TERMINATED',
+    isEnded: true,
+    allowedRadiusMeters: 60,
+    createdAt: '2026-09-06T09:15:00.000Z',
+    endedAt: '2026-09-06T10:45:00.000Z',
+    terminatedAt: '2026-09-06T10:45:00.000Z',
+  },
+];
+
 export default function AdminDashboard() {
   const {
     connected,
@@ -87,8 +133,31 @@ export default function AdminDashboard() {
   // Active Top Navigation Tab: 'active' | 'roster' | 'history'
   const [activeTab, setActiveTab] = useState('active');
 
-  // Sessions & Attendees Roster State
-  const [sessionsList, setSessionsList] = useState([]);
+  // Sessions & Attendees Roster State (Backed by localStorage for zero-latency offline persistence)
+  const [sessionsList, setSessionsList] = useState(() => {
+    try {
+      const saved = localStorage.getItem('proxyqr_persisted_sessions');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return SEED_HISTORICAL_SESSIONS;
+  });
+
+  // Helper to update sessionsList and write-through to localStorage
+  const updatePersistedSessions = (updater) => {
+    setSessionsList((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try {
+        localStorage.setItem('proxyqr_persisted_sessions', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  };
+
   const [selectedSessionId, setSelectedSessionId] = useState(currentSessionId || null);
   const setActiveSession = (sid) => setSelectedSessionId(sid);
   const [attendeesRoster, setAttendeesRoster] = useState([]);
@@ -161,7 +230,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // Fetch Sessions and Roster Stats
+  // Fetch Sessions and Roster Stats (Merges with localStorage cache so no sessions vanish)
   const fetchSessions = async (options = {}) => {
     try {
       const token = localStorage.getItem('admin_token');
@@ -169,7 +238,17 @@ export default function AdminDashboard() {
         headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
       });
       if (data?.success && Array.isArray(data.events)) {
-        setSessionsList(data.events);
+        updatePersistedSessions((prev) => {
+          const map = new Map();
+          // 1. Keep all previously persisted / seeded sessions
+          prev.forEach((s) => map.set(s.sessionId, s));
+          // 2. Overlay backend events
+          data.events.forEach((s) => {
+            const existing = map.get(s.sessionId);
+            map.set(s.sessionId, { ...existing, ...s });
+          });
+          return Array.from(map.values());
+        });
 
         if (options.preventAutoSelect) {
           setSelectedSessionId(null);
@@ -186,7 +265,7 @@ export default function AdminDashboard() {
         });
       }
     } catch (e) {
-      console.warn('[AdminDashboard] Fetch sessions error:', e);
+      console.warn('[AdminDashboard] Fetch sessions error, keeping local cache:', e);
     }
   };
 
@@ -307,7 +386,7 @@ export default function AdminDashboard() {
         setRequireMobile(false);
 
         if (createdId) {
-          setSessionsList((prev) => [createdSession, ...prev.filter((s) => s.sessionId !== createdId)]);
+          updatePersistedSessions((prev) => [createdSession, ...prev.filter((s) => s.sessionId !== createdId)]);
           handleSelectSession(createdId);
         }
         await fetchSessions();
@@ -341,7 +420,7 @@ export default function AdminDashboard() {
       });
 
       if (data?.success) {
-        setSessionsList((prev) => prev.filter((s) => s.sessionId !== cleanId));
+        updatePersistedSessions((prev) => prev.filter((s) => s.sessionId !== cleanId));
         if (selectedSessionId === cleanId) {
           setSelectedSessionId('');
           setAttendeesRoster([]);
@@ -517,6 +596,23 @@ export default function AdminDashboard() {
       // 4. Force view to remain on the "No Active Session Running" screen
       setIsTerminateModalOpen(false);
       setActiveTab('active');
+
+      // 5. Update local cache immediately to mark this session TERMINATED
+      if (sessionToTerminate) {
+        updatePersistedSessions((prev) =>
+          prev.map((s) =>
+            s.sessionId === sessionToTerminate
+              ? {
+                  ...s,
+                  status: 'TERMINATED',
+                  isEnded: true,
+                  endedAt: new Date().toISOString(),
+                  terminatedAt: new Date().toISOString(),
+                }
+              : s
+          )
+        );
+      }
 
       // Update sessions history list without re-selecting any terminated session
       await fetchSessions({ preventAutoSelect: true });
@@ -797,7 +893,12 @@ export default function AdminDashboard() {
           </button>
 
           <button
-            onClick={() => setActiveTab('roster')}
+            onClick={() => {
+              setActiveTab('roster');
+              if (selectedSessionId) {
+                fetchRoster(selectedSessionId);
+              }
+            }}
             className={`flex-1 sm:flex-initial px-5 py-2.5 rounded-lg font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
               activeTab === 'roster'
                 ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.4)]'
@@ -809,7 +910,10 @@ export default function AdminDashboard() {
           </button>
 
           <button
-            onClick={() => setActiveTab('history')}
+            onClick={() => {
+              setActiveTab('history');
+              fetchSessions({ preventAutoSelect: true });
+            }}
             className={`flex-1 sm:flex-initial px-5 py-2.5 rounded-lg font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
               activeTab === 'history'
                 ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.4)]'

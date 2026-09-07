@@ -21,7 +21,8 @@ dotenv.config({ path: path.join(__dirname, '../../.env') });
 const { connectDB } = require('./config/db');
 const attendanceRoutes = require('./routes/attendanceRoutes');
 const adminRoutes = require('./routes/adminRoutes');
-const { initSocketService, getLocalNetworkIp } = require('./services/socketService');
+const { initSocketService, getLocalNetworkIp, activeSessions } = require('./services/socketService');
+const storageService = require('./services/storageService');
 
 const app = express();
 const server = http.createServer(app);
@@ -71,6 +72,9 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date(),
   });
 });
+
+// Initialize local file-backed persistence & preload saved sessions
+storageService.init(activeSessions);
 
 // Initialize Socket.IO dynamic session rooms
 initSocketService(io);
