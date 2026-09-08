@@ -468,7 +468,7 @@ export default function FacultyQRDisplay() {
                   <QRCodeSVG
                     value={qrCodeValue}
                     size={440}
-                    level="H"
+                    level="L"
                     includeMargin={true}
                     className="w-[280px] h-[280px] sm:w-[380px] sm:h-[380px] md:w-[440px] md:h-[440px] max-w-full aspect-square"
                   />
@@ -823,7 +823,7 @@ export default function FacultyQRDisplay() {
                 <QRCodeSVG
                   value={qrCodeValue}
                   size={310}
-                  level="H"
+                  level="L"
                   includeMargin={true}
                   className="w-[260px] h-[260px] sm:w-[310px] sm:h-[310px] max-w-full aspect-square"
                 />

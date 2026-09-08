@@ -551,11 +551,6 @@ export default function AdminDashboard() {
         }
       }
 
-      // Check seed attendance fallback if still empty
-      if ((!rosterData || rosterData.length === 0) && SEED_ATTENDANCE_MAP[sid]) {
-        rosterData = SEED_ATTENDANCE_MAP[sid];
-      }
-
       if (!rosterData || rosterData.length === 0) {
         alert(`No verified attendee records found for session ${sid}.`);
         return;
@@ -1223,19 +1218,19 @@ export default function AdminDashboard() {
                 <div className="scanline"></div>
 
                 {!isSessionActive ? (
-                  <div className="w-[260px] h-[260px] sm:w-[310px] sm:h-[310px] bg-slate-900 rounded-2xl flex flex-col items-center justify-center p-6 text-center space-y-3 border border-amber-500/30">
+                  <div className="w-[280px] h-[280px] sm:w-[340px] sm:h-[340px] bg-slate-900 rounded-2xl flex flex-col items-center justify-center p-6 text-center space-y-3 border border-amber-500/30">
                     <Pause className="w-12 h-12 text-amber-400 animate-pulse" />
                     <h4 className="font-bold text-amber-300 font-display">SESSION PAUSED</h4>
                     <p className="text-[11px] text-slate-400 font-mono">Click "Start Session" above to activate 60s rotation loop.</p>
                   </div>
                 ) : (
-                  <div className="bg-white p-3.5 sm:p-4 rounded-2xl shadow-inner border-2 border-white flex items-center justify-center">
+                  <div className="bg-white p-4 sm:p-5 rounded-3xl shadow-inner border-2 border-white flex items-center justify-center">
                     <QRCodeSVG
                       value={qrCodeValue}
-                      size={310}
-                      level="H"
+                      size={340}
+                      level="L"
                       includeMargin={true}
-                      className="w-[260px] h-[260px] sm:w-[310px] sm:h-[310px] max-w-full aspect-square"
+                      className="w-[280px] h-[280px] sm:w-[340px] sm:h-[340px] max-w-full aspect-square block"
                     />
                   </div>
                 )}
@@ -1844,52 +1839,163 @@ export default function AdminDashboard() {
 
       {/* FULLSCREEN PROJECTOR OVERLAY MODE */}
       {isProjectorMode && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[999999] w-screen h-screen bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-8 select-none overflow-y-auto">
-          <button
-            onClick={exitProjectorMode}
-            className="absolute top-6 right-6 px-3.5 py-2.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/80 transition-all cursor-pointer flex items-center gap-2 shadow-lg group"
-            title="Press 'Esc' or 'F' to exit fullscreen"
-          >
-            <Minimize className="w-5 h-5 text-cyan-400 group-hover:scale-110 transition-transform" />
-            <span className="text-xs font-mono font-semibold hidden sm:inline text-slate-300">Exit</span>
-            <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-600 text-[10px] font-mono text-cyan-300 hidden sm:inline">Esc / F</span>
-          </button>
+        <div className="fixed inset-0 z-[999999] w-screen h-screen bg-slate-950 text-white flex flex-col justify-between p-4 sm:p-6 lg:p-8 select-none overflow-hidden animate-fadeIn">
+          {/* Subtle ambient glow backdrop */}
+          <div className="absolute -top-32 -left-32 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
+          <div className="absolute -bottom-32 -right-32 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none"></div>
 
-          <div className="space-y-6 text-center max-w-2xl w-full">
-            <div className="space-y-1">
-              <span className="text-xs font-mono font-bold text-cyan-400 tracking-wider uppercase">
-                {selectedSessionId} • {activeSessionObj?.labIdentifier || qrData?.labIdentifier || 'Lab Room'}
-              </span>
-              <h1 className="font-display font-black text-3xl sm:text-4xl text-white">
-                {activeSessionObj?.title || qrData?.title || selectedSessionId || 'Attendance Session'}
-              </h1>
-            </div>
-
-            <div className="bg-white p-5 sm:p-7 rounded-3xl shadow-[0_0_90px_rgba(6,182,212,0.5)] inline-block border-4 border-cyan-400 transition-transform hover:scale-[1.01]">
-              <QRCodeSVG
-                value={qrCodeValue}
-                size={460}
-                level="H"
-                includeMargin={true}
-                className="w-[280px] h-[280px] sm:w-[380px] sm:h-[380px] md:w-[460px] md:h-[460px] max-w-full aspect-square"
-              />
-            </div>
-
-            <div className="text-cyan-400 font-mono font-bold text-base tracking-widest">
-              <span>SCAN WITH GOOGLE LENS OR PHONE CAMERA</span>
-            </div>
-
-            <div className="max-w-md mx-auto space-y-2 font-mono">
-              <div className="flex justify-between text-sm text-cyan-300">
-                <span>Auto-Rotating Token</span>
-                <span>{safeCountdown}s</span>
+          {/* Top Bar: Session Info & Controls */}
+          <div className="w-full max-w-7xl mx-auto flex items-center justify-between gap-4 z-10">
+            <div className="flex items-center gap-3">
+              <div className="p-2 sm:p-2.5 rounded-2xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-400">
+                <Radio className="w-5 h-5 animate-pulse" />
               </div>
-              <div className="w-full h-4 bg-slate-900 rounded-full overflow-hidden p-0.5 border border-slate-800">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 shadow-[0_0_20px_rgba(6,182,212,0.9)]"
-                  style={{ width: `${progressPercent}%` }}
-                ></div>
+              <div>
+                <div className="flex items-center gap-2 text-xs font-mono text-cyan-400">
+                  <span className="font-bold text-white tracking-wider uppercase">{selectedSessionId}</span>
+                  {activeSessionObj?.labIdentifier && (
+                    <>
+                      <span>•</span>
+                      <span className="text-slate-300">{activeSessionObj.labIdentifier}</span>
+                    </>
+                  )}
+                  {activeSessionObj?.proctorName && (
+                    <>
+                      <span className="hidden sm:inline">•</span>
+                      <span className="text-slate-400 hidden sm:inline">{activeSessionObj.proctorName}</span>
+                    </>
+                  )}
+                </div>
+                <h1 className="font-display font-extrabold text-base sm:text-xl text-white tracking-tight">
+                  {activeSessionObj?.title || qrData?.title || selectedSessionId || 'Attendance Session'}
+                </h1>
               </div>
+            </div>
+
+            <div className="flex items-center gap-2 sm:gap-3">
+              <button
+                type="button"
+                onClick={forceRotateQR}
+                disabled={!isSessionActive}
+                className="px-3 py-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-300 border border-slate-800 text-xs font-mono flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-40"
+                title="Force New QR Rotation"
+              >
+                <RotateCw className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="hidden sm:inline">Rotate QR</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={exitProjectorMode}
+                className="px-3.5 py-2 rounded-xl bg-slate-900/90 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/30 text-slate-300 border border-slate-800 text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-lg"
+                title="Exit Fullscreen (Esc)"
+              >
+                <Minimize className="w-4 h-4 text-rose-400" />
+                <span>Exit Fullscreen</span>
+                <kbd className="hidden sm:inline px-1 py-0.5 rounded bg-slate-950 text-[10px] text-slate-400 border border-slate-700">ESC</kbd>
+              </button>
+            </div>
+          </div>
+
+          {/* Center Hero Stage: BIGGEST QR CODE & CIRCULAR 60S LOOP COUNTDOWN */}
+          <div className="flex-1 flex flex-col lg:flex-row items-center justify-center gap-8 lg:gap-14 my-auto w-full max-w-7xl mx-auto z-10 px-2">
+            {/* BIGGEST QR CODE CONTAINER */}
+            <div className="bg-white p-4 sm:p-7 rounded-[32px] sm:rounded-[44px] shadow-[0_0_100px_rgba(6,182,212,0.4)] border-4 sm:border-8 border-white flex items-center justify-center max-w-[85vw] max-h-[76vh] aspect-square transition-transform hover:scale-[1.008]">
+              {!isSessionActive ? (
+                <div className="w-[60vmin] h-[60vmin] max-w-[520px] max-h-[520px] bg-slate-900 rounded-3xl flex flex-col items-center justify-center p-8 text-center space-y-4">
+                  <Pause className="w-16 h-16 text-amber-400 animate-pulse" />
+                  <h3 className="font-display font-bold text-2xl text-amber-300">SESSION PAUSED</h3>
+                  <p className="text-xs font-mono text-slate-400">QR code rotation is paused.</p>
+                </div>
+              ) : (
+                <QRCodeSVG
+                  value={qrCodeValue}
+                  size={640}
+                  level="L"
+                  includeMargin={false}
+                  className="w-full h-full max-w-[72vh] max-h-[72vh] aspect-square block"
+                />
+              )}
+            </div>
+
+            {/* CIRCULAR LOOP 60-SECOND COUNTDOWN TIMER */}
+            <div className="flex flex-col items-center justify-center space-y-4 flex-shrink-0">
+              {/* Circular Progress Ring */}
+              <div className="relative flex items-center justify-center">
+                <svg className="w-36 h-36 sm:w-44 sm:h-44 -rotate-90 transform" viewBox="0 0 120 120">
+                  {/* Background Track */}
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r="50"
+                    className="stroke-slate-800"
+                    strokeWidth="8"
+                    fill="transparent"
+                  />
+                  {/* Glowing 60s Animated Circular Loop */}
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r="50"
+                    className={`transition-all duration-1000 ease-linear ${
+                      safeCountdown <= 10
+                        ? 'stroke-rose-500 drop-shadow-[0_0_15px_rgba(244,63,94,0.9)]'
+                        : 'stroke-cyan-400 drop-shadow-[0_0_15px_rgba(6,182,212,0.85)]'
+                    }`}
+                    strokeWidth="8"
+                    strokeDasharray={314.16}
+                    strokeDashoffset={314.16 * (1 - Math.max(0, Math.min(60, safeCountdown)) / 60)}
+                    strokeLinecap="round"
+                    fill="transparent"
+                  />
+                </svg>
+
+                {/* Center Countdown Display */}
+                <div className="absolute flex flex-col items-center justify-center text-center">
+                  <span
+                    className={`font-mono font-black text-4xl sm:text-5xl tracking-tighter ${
+                      safeCountdown <= 10 ? 'text-rose-400 animate-pulse' : 'text-cyan-400'
+                    }`}
+                  >
+                    {!isSessionActive ? 'PAUSED' : safeCountdown}
+                  </span>
+                  {isSessionActive && (
+                    <span className="text-[10px] sm:text-xs font-mono text-slate-400 uppercase tracking-widest font-bold">
+                      SEC
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Status Details */}
+              <div className="text-center space-y-1">
+                <div className="text-xs sm:text-sm font-mono font-bold text-cyan-300 tracking-wider uppercase">
+                  60s Auto-Rotate Loop
+                </div>
+                <div className="text-[11px] font-mono text-slate-400">
+                  1 Device • 1 Submission
+                </div>
+              </div>
+
+              {/* Aryan Kale signature badge */}
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/90 border border-cyan-500/30 text-xs font-mono shadow-[0_0_12px_rgba(6,182,212,0.15)]">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+                <span className="text-slate-400 font-sans">By</span>
+                <span className="text-cyan-300 font-bold tracking-wide">Aryan Kale</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom Bar: Instructions & Attendees Count */}
+          <div className="w-full max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 border-t border-slate-800/80 pt-3 text-xs font-mono text-slate-400 z-10">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              <span className="text-emerald-400 font-semibold">LIVE ATTENDANCE ACTIVE</span>
+              <span>•</span>
+              <span>{attendeesRoster.length} recorded</span>
+            </div>
+            <div className="text-[11px] text-slate-500">
+              Point phone camera at the QR code • Press <kbd className="px-1 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300">F</kbd> or <kbd className="px-1 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300">Esc</kbd> to exit fullscreen
             </div>
           </div>
         </div>,
