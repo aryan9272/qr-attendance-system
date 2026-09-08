@@ -393,6 +393,13 @@ export default function StudentScanner() {
     }
   }, [googleClientId]);
 
+  // Automatically trigger native browser GPS location permission once Google OAuth is completed
+  useEffect(() => {
+    if (googleStudent && !userLocation) {
+      requestGpsFix(true);
+    }
+  }, [googleStudent, userLocation]);
+
   // Manual Trigger for Google Sign-In button
   const handleGoogleSignInClick = () => {
     setOauthError('');
@@ -676,37 +683,6 @@ export default function StudentScanner() {
                 {remainingSeconds}s
               </span>
             </div>
-
-            {/* Location Permission Prompt Banner (if not yet granted) */}
-            {!userLocation && (
-              <div className="p-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 text-xs space-y-2.5">
-                <div className="flex items-center gap-2 font-bold text-cyan-300">
-                  <MapPin className="w-4 h-4 text-cyan-400 animate-pulse" />
-                  <span>Classroom Location Permission Required</span>
-                </div>
-                <p className="text-slate-300 text-[11px] leading-relaxed">
-                  Please enable location access on your phone so your attendance can be verified within the classroom geofence.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => requestGpsFix(true)}
-                  disabled={isRefreshingGps}
-                  className="w-full py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md active:scale-[0.98] disabled:opacity-50"
-                >
-                  {isRefreshingGps ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Calibrating Device GPS...</span>
-                    </>
-                  ) : (
-                    <>
-                      <MapPin className="w-3.5 h-3.5" />
-                      <span>Allow & Calibrate Location</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
 
             {/* Classroom Proximity & Calibration Card */}
             <div className="glass-panel p-3.5 rounded-2xl border border-slate-800 space-y-2">

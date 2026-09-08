@@ -872,23 +872,28 @@ exports.getSessionHistory = async (req, res) => {
 
     const sessionStats = await Promise.all(
       sessions.map(async (sess) => {
-        let totalAttendees = sess.totalAttendees || 0;
+        let totalAttendees = 0;
         let manualOverrides = 0;
+        const cleanSessId = String(sess.sessionId).trim();
+        const escId = cleanSessId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
         if (getIsConnected()) {
           try {
-            totalAttendees = await Attendance.countDocuments({ sessionId: sess.sessionId });
+            const query = { sessionId: new RegExp(`^${escId}$`, 'i') };
+            totalAttendees = await Attendance.countDocuments(query);
             manualOverrides = await Attendance.countDocuments({
-              sessionId: sess.sessionId,
+              ...query,
               verificationMode: 'ADMIN_MANUAL_OVERRIDE',
             });
           } catch (e) {}
         }
 
+        const fileAtt = storageService.getAttendanceBySession(cleanSessId);
         if (totalAttendees === 0) {
-          const fileAtt = storageService.getAttendanceBySession(sess.sessionId);
           totalAttendees = fileAtt.length;
           manualOverrides = fileAtt.filter((a) => a.verificationMode === 'ADMIN_MANUAL_OVERRIDE').length;
+        } else if (fileAtt.length > 0) {
+          totalAttendees = Math.max(totalAttendees, fileAtt.length);
         }
 
         return {
@@ -1031,17 +1036,22 @@ exports.getEvents = async (req, res) => {
     const events = await Promise.all(
       allEvents.map(async (item) => {
         const ts = getTs(item);
-        let totalAttendees = item.totalAttendees || 0;
+        let totalAttendees = 0;
+        const cleanSessId = String(item.sessionId).trim();
+        const escId = cleanSessId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
         if (getIsConnected()) {
           try {
-            totalAttendees = await Attendance.countDocuments({ sessionId: item.sessionId });
+            const query = { sessionId: new RegExp(`^${escId}$`, 'i') };
+            totalAttendees = await Attendance.countDocuments(query);
           } catch (e) {}
         }
 
+        const fileAtt = storageService.getAttendanceBySession(cleanSessId);
         if (totalAttendees === 0) {
-          const fileAtt = storageService.getAttendanceBySession(item.sessionId);
           totalAttendees = fileAtt.length;
+        } else if (fileAtt.length > 0) {
+          totalAttendees = Math.max(totalAttendees, fileAtt.length);
         }
 
         return {
@@ -1074,27 +1084,40 @@ exports.getAttendanceStats = async (req, res) => {
       return res.json({ success: true, stats: { count: 0, recent: [] } });
     }
     const targetSessionId = String(eventId).trim().toUpperCase();
+    const escapedSessionId = targetSessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     let count = 0;
     let recent = [];
 
     if (getIsConnected()) {
       try {
-        count = await Attendance.countDocuments({ sessionId: targetSessionId });
-        recent = await Attendance.find({ sessionId: targetSessionId }).sort({ timestamp: -1 }).limit(200);
+        const query = { sessionId: new RegExp(`^${escapedSessionId}$`, 'i') };
+        count = await Attendance.countDocuments(query);
+        const docs = await Attendance.find(query).sort({ timestamp: -1 }).limit(500);
+        recent = docs.map((d) => (d.toObject ? d.toObject() : d));
       } catch (e) {}
     }
 
-    if (count === 0 && (!recent || recent.length === 0)) {
-      const fileAtt = storageService.getAttendanceBySession(targetSessionId);
+    const fileAtt = storageService.getAttendanceBySession(targetSessionId);
+    if (!recent || recent.length === 0) {
       count = fileAtt.length;
-      recent = fileAtt.slice(0, 200);
+      recent = fileAtt.slice(0, 500);
+    } else if (fileAtt.length > 0) {
+      const seen = new Set(recent.map((r) => String(r.regNo || r.studentId || r.email || r._id).toUpperCase()));
+      for (const item of fileAtt) {
+        const key = String(item.regNo || item.studentId || item.email || item._id).toUpperCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          recent.push(item);
+        }
+      }
+      count = recent.length;
     }
 
     return res.json({
       success: true,
       stats: {
-        count,
+        count: count || recent.length,
         recent,
       },
     });
@@ -1104,7 +1127,7 @@ exports.getAttendanceStats = async (req, res) => {
       success: true,
       stats: {
         count: fileAtt.length,
-        recent: fileAtt.slice(0, 200),
+        recent: fileAtt.slice(0, 500),
       },
     });
   }

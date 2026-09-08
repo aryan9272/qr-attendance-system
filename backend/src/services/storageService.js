@@ -132,18 +132,21 @@ function saveAttendanceList(records) {
 
 function saveAttendance(record) {
   if (!record || !record.sessionId) return;
+  const cleanSessionId = String(record.sessionId).trim().toUpperCase();
   const list = loadAttendance();
-  const cleanRegNo = (record.regNo || record.studentId || '').toUpperCase();
+  const cleanRegNo = (record.regNo || record.studentId || '').trim().toUpperCase();
+  const cleanEmail = (record.email || '').trim().toLowerCase();
   const existingIdx = list.findIndex(
     (item) =>
-      item.sessionId === record.sessionId &&
-      ((item.regNo && item.regNo.toUpperCase() === cleanRegNo) ||
-        (item.email && item.email.toLowerCase() === (record.email || '').toLowerCase()))
+      String(item.sessionId || '').trim().toUpperCase() === cleanSessionId &&
+      ((item.regNo && item.regNo.trim().toUpperCase() === cleanRegNo) ||
+        (item.email && item.email.trim().toLowerCase() === cleanEmail))
   );
 
   const newRecord = {
     _id: record._id || `att_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     ...record,
+    sessionId: cleanSessionId,
     timestamp: record.timestamp || new Date().toISOString(),
   };
 
@@ -158,9 +161,9 @@ function saveAttendance(record) {
 
 function getAttendanceBySession(sessionId) {
   if (!sessionId) return [];
-  const cleanId = sessionId.toUpperCase();
+  const cleanId = String(sessionId).trim().toUpperCase();
   const list = loadAttendance();
-  return list.filter((item) => (item.sessionId || '').toUpperCase() === cleanId);
+  return list.filter((item) => String(item.sessionId || '').trim().toUpperCase() === cleanId);
 }
 
 function updateAttendeeRecord(recordId, updates) {

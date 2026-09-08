@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -6,6 +8,47 @@ const { sendProctorOtpEmail, sendSecurityOtpEmail } = require('./mailer');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'proxyqr-super-secret-jwt-key-2026';
 const DEFAULT_MASTER_PASS = '2024BIT020@2026';
+
+const DATA_DIR = path.join(__dirname, '../../data');
+const ADMIN_STORE_FILE = path.join(DATA_DIR, 'admin_store.json');
+
+function ensureDataDir() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+  } catch (e) {}
+}
+
+function loadAdminFromDisk() {
+  ensureDataDir();
+  try {
+    if (!fs.existsSync(ADMIN_STORE_FILE)) return null;
+    const raw = fs.readFileSync(ADMIN_STORE_FILE, 'utf8');
+    const data = JSON.parse(raw);
+    if (data && data.passwordHash) return data;
+  } catch (e) {
+    console.warn('[AdminAuth] Error reading admin_store.json:', e.message);
+  }
+  return null;
+}
+
+function saveAdminToDisk(data) {
+  ensureDataDir();
+  try {
+    const payload = {
+      email: (data.email || 'voyager9579@gmail.com').toLowerCase().trim(),
+      passwordHash: data.passwordHash,
+      tokenVersion: typeof data.tokenVersion === 'number' ? data.tokenVersion : 0,
+      updatedAt: data.updatedAt || new Date().toISOString(),
+    };
+    fs.writeFileSync(ADMIN_STORE_FILE, JSON.stringify(payload, null, 2), 'utf8');
+    return true;
+  } catch (e) {
+    console.error('[AdminAuth] Error writing admin_store.json:', e.message);
+    return false;
+  }
+}
 
 // In-Memory OTP Store with Rate-Limiting Sentinel
 // Key: 'owner_otp' -> { code, type, expiresAt, attempts, requests: [timestamps], lockedUntil }
@@ -20,24 +63,44 @@ const otpStore = {
 
 const { getIsConnected } = require('../config/db');
 
-// In-Memory Admin Fallback Store
+// In-Memory Admin Fallback Store (Backed by admin_store.json disk persistence)
 const inMemoryAdmin = {
   _id: 'in-memory-admin-id',
   email: (process.env.ADMIN_OWNER_EMAIL || 'voyager9579@gmail.com').toLowerCase().trim(),
   passwordHash: '',
   tokenVersion: 0,
-  save: async function () { return this; },
+  save: async function () {
+    saveAdminToDisk({
+      email: this.email,
+      passwordHash: this.passwordHash,
+      tokenVersion: this.tokenVersion,
+      updatedAt: new Date().toISOString(),
+    });
+    return this;
+  },
 };
 
 /**
- * Ensure single Admin document exists in DB with hashed password (or in-memory fallback)
+ * Ensure single Admin document exists in DB with hashed password (or disk-persisted fallback)
  */
 async function getOrInitAdmin() {
   const ownerEmail = (process.env.ADMIN_OWNER_EMAIL || 'voyager9579@gmail.com').toLowerCase().trim();
 
-  if (!inMemoryAdmin.passwordHash) {
+  // 1. Try loading from persistent disk storage first
+  const diskData = loadAdminFromDisk();
+  if (diskData && diskData.passwordHash) {
+    inMemoryAdmin.email = diskData.email || ownerEmail;
+    inMemoryAdmin.passwordHash = diskData.passwordHash;
+    inMemoryAdmin.tokenVersion = typeof diskData.tokenVersion === 'number' ? diskData.tokenVersion : 0;
+  } else if (!inMemoryAdmin.passwordHash) {
     const salt = await bcrypt.genSalt(10);
     inMemoryAdmin.passwordHash = await bcrypt.hash(process.env.ADMIN_PASSWORD_INIT || DEFAULT_MASTER_PASS, salt);
+    saveAdminToDisk({
+      email: ownerEmail,
+      passwordHash: inMemoryAdmin.passwordHash,
+      tokenVersion: inMemoryAdmin.tokenVersion,
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   if (!getIsConnected()) {
@@ -56,14 +119,30 @@ async function getOrInitAdmin() {
       admin = await Admin.create({
         email: ownerEmail,
         passwordHash: inMemoryAdmin.passwordHash,
-        tokenVersion: 0,
+        tokenVersion: inMemoryAdmin.tokenVersion || 0,
       });
       console.log(`[Admin Security] Created initial Master Admin account for: ${ownerEmail}`);
+    } else {
+      // Keep DB and Disk synchronized
+      if (diskData && diskData.updatedAt && (!admin.updatedAt || new Date(diskData.updatedAt) > new Date(admin.updatedAt))) {
+        admin.passwordHash = diskData.passwordHash;
+        admin.tokenVersion = diskData.tokenVersion || 0;
+        await admin.save();
+      } else if (admin.passwordHash && admin.passwordHash !== inMemoryAdmin.passwordHash) {
+        inMemoryAdmin.passwordHash = admin.passwordHash;
+        inMemoryAdmin.tokenVersion = admin.tokenVersion || 0;
+        saveAdminToDisk({
+          email: admin.email,
+          passwordHash: admin.passwordHash,
+          tokenVersion: admin.tokenVersion || 0,
+          updatedAt: admin.updatedAt ? admin.updatedAt.toISOString() : new Date().toISOString(),
+        });
+      }
     }
 
     return admin;
   } catch (err) {
-    console.warn('[Admin Auth] MongoDB query error, falling back to in-memory admin:', err.message);
+    console.warn('[Admin Auth] MongoDB query error, falling back to disk/in-memory admin:', err.message);
     return inMemoryAdmin;
   }
 }
@@ -103,8 +182,18 @@ async function updateMasterPassword(currentPassword, newPassword) {
   const newHash = await bcrypt.hash(newPassword, salt);
 
   admin.passwordHash = newHash;
-  admin.tokenVersion += 1; // Also invalidates all active sessions
+  admin.tokenVersion = (typeof admin.tokenVersion === 'number' ? admin.tokenVersion : 0) + 1; // Invalidate all active sessions
   await admin.save();
+
+  // Persist directly to disk store so restarts never revert to default password
+  saveAdminToDisk({
+    email: admin.email,
+    passwordHash: newHash,
+    tokenVersion: admin.tokenVersion,
+    updatedAt: new Date().toISOString(),
+  });
+  inMemoryAdmin.passwordHash = newHash;
+  inMemoryAdmin.tokenVersion = admin.tokenVersion;
 
   return admin;
 }
@@ -206,8 +295,18 @@ async function updateMasterPasswordWithOtp(currentPassword, newPassword, otpInpu
   const newHash = await bcrypt.hash(newPassword, salt);
 
   admin.passwordHash = newHash;
-  admin.tokenVersion += 1; // Revokes all active sessions across devices
+  admin.tokenVersion = (typeof admin.tokenVersion === 'number' ? admin.tokenVersion : 0) + 1; // Revokes all active sessions across devices
   await admin.save();
+
+  // Persist directly to disk store so restarts never revert to default password
+  saveAdminToDisk({
+    email: admin.email,
+    passwordHash: newHash,
+    tokenVersion: admin.tokenVersion,
+    updatedAt: new Date().toISOString(),
+  });
+  inMemoryAdmin.passwordHash = newHash;
+  inMemoryAdmin.tokenVersion = admin.tokenVersion;
 
   return admin;
 }
@@ -232,8 +331,18 @@ async function resetMasterPasswordWithOtp(otpInput, newPassword) {
   const newHash = await bcrypt.hash(newPassword, salt);
 
   admin.passwordHash = newHash;
-  admin.tokenVersion += 1; // Immediately invalidates all existing sessions including any hijacked ones
+  admin.tokenVersion = (typeof admin.tokenVersion === 'number' ? admin.tokenVersion : 0) + 1; // Invalidate all existing sessions
   await admin.save();
+
+  // Persist directly to disk store so restarts never revert to default password
+  saveAdminToDisk({
+    email: admin.email,
+    passwordHash: newHash,
+    tokenVersion: admin.tokenVersion,
+    updatedAt: new Date().toISOString(),
+  });
+  inMemoryAdmin.passwordHash = newHash;
+  inMemoryAdmin.tokenVersion = admin.tokenVersion;
 
   return admin;
 }
@@ -243,8 +352,17 @@ async function resetMasterPasswordWithOtp(otpInput, newPassword) {
  */
 async function incrementTokenVersion() {
   const admin = await getOrInitAdmin();
-  admin.tokenVersion += 1;
+  admin.tokenVersion = (typeof admin.tokenVersion === 'number' ? admin.tokenVersion : 0) + 1;
   await admin.save();
+
+  saveAdminToDisk({
+    email: admin.email,
+    passwordHash: admin.passwordHash,
+    tokenVersion: admin.tokenVersion,
+    updatedAt: new Date().toISOString(),
+  });
+  inMemoryAdmin.tokenVersion = admin.tokenVersion;
+
   return admin.tokenVersion;
 }
 

@@ -221,17 +221,18 @@ export default function AdminDashboard() {
         });
 
         if (options.preventAutoSelect) {
-          setSelectedSessionId(null);
+          // Do not wipe selectedSessionId when navigating tabs
           return;
         }
 
         setSelectedSessionId((prev) => {
           if (!prev) return null;
-          const prevEv = data.events.find((e) => e.sessionId === prev);
-          if (prevEv && prevEv.status !== 'TERMINATED' && !prevEv.isEnded) {
-            return prev;
+          const cleanPrev = String(prev).trim().toUpperCase();
+          const prevEv = data.events.find((e) => String(e.sessionId).trim().toUpperCase() === cleanPrev);
+          if (prevEv) {
+            return prevEv.sessionId;
           }
-          return null;
+          return prev;
         });
       }
     } catch (e) {
@@ -253,11 +254,9 @@ export default function AdminDashboard() {
       });
       if (data?.success && data?.stats) {
         const recent = Array.isArray(data.stats.recent) ? data.stats.recent : [];
-        if (recent.length > 0) {
-          setAttendeesRoster(recent);
-          setTotalCount(data.stats.count || recent.length);
-          return;
-        }
+        setAttendeesRoster(recent);
+        setTotalCount(typeof data.stats.count === 'number' ? data.stats.count : recent.length);
+        return;
       }
     } catch (e) {
       console.warn('[AdminDashboard] Fetch roster error:', e);
@@ -1213,24 +1212,24 @@ export default function AdminDashboard() {
                 </button>
               </div>
 
-              {/* QR Code Container */}
-              <div className="relative w-full max-w-md p-5 sm:p-6 bg-slate-950/90 rounded-3xl border-2 border-cyan-500/40 shadow-[0_0_45px_rgba(6,182,212,0.28)] flex flex-col items-center justify-center transition-transform hover:scale-[1.01]">
+              {/* QR Code Container (Enlarged for Easy Scanning) */}
+              <div className="relative w-full max-w-lg p-5 sm:p-7 bg-slate-950/90 rounded-3xl border-2 border-cyan-500/40 shadow-[0_0_55px_rgba(6,182,212,0.32)] flex flex-col items-center justify-center transition-transform hover:scale-[1.01]">
                 <div className="scanline"></div>
 
                 {!isSessionActive ? (
-                  <div className="w-[280px] h-[280px] sm:w-[340px] sm:h-[340px] bg-slate-900 rounded-2xl flex flex-col items-center justify-center p-6 text-center space-y-3 border border-amber-500/30">
+                  <div className="w-[300px] h-[300px] sm:w-[380px] sm:h-[380px] bg-slate-900 rounded-2xl flex flex-col items-center justify-center p-6 text-center space-y-3 border border-amber-500/30">
                     <Pause className="w-12 h-12 text-amber-400 animate-pulse" />
-                    <h4 className="font-bold text-amber-300 font-display">SESSION PAUSED</h4>
-                    <p className="text-[11px] text-slate-400 font-mono">Click "Start Session" above to activate 60s rotation loop.</p>
+                    <h4 className="font-bold text-amber-300 font-display text-lg">SESSION PAUSED</h4>
+                    <p className="text-xs text-slate-400 font-mono">Click "Start Session" above to activate 60s rotation loop.</p>
                   </div>
                 ) : (
                   <div className="bg-white p-4 sm:p-5 rounded-3xl shadow-inner border-2 border-white flex items-center justify-center">
                     <QRCodeSVG
                       value={qrCodeValue}
-                      size={340}
+                      size={380}
                       level="L"
                       includeMargin={true}
-                      className="w-[280px] h-[280px] sm:w-[340px] sm:h-[340px] max-w-full aspect-square block"
+                      className="w-[300px] h-[300px] sm:w-[380px] sm:h-[380px] max-w-full aspect-square block"
                     />
                   </div>
                 )}
@@ -1474,13 +1473,18 @@ export default function AdminDashboard() {
                 <div className="w-full sm:w-auto flex items-center gap-2">
                   <span className="text-xs font-mono text-slate-400 whitespace-nowrap">Session:</span>
                   <select
-                    value={selectedSessionId}
+                    value={selectedSessionId || ''}
                     onChange={(e) => handleSelectSession(e.target.value)}
                     className="w-full sm:w-auto px-3.5 py-2 rounded-xl glass-input text-xs font-mono text-cyan-300 bg-slate-900 border border-slate-700"
                   >
+                    {selectedSessionId && !sessionsList.some((s) => s.sessionId === selectedSessionId) && (
+                      <option value={selectedSessionId}>
+                        {selectedSessionId} (Current Selection)
+                      </option>
+                    )}
                     {sessionsList.map((s) => (
                       <option key={s.sessionId} value={s.sessionId}>
-                        {s.sessionId} — {s.labIdentifier} ({s.title})
+                        {s.sessionId} — {s.labIdentifier || 'Lab'} ({s.title || 'Session'}){s.status === 'TERMINATED' || s.isEnded ? ' [Ended]' : ''}
                       </option>
                     ))}
                   </select>
