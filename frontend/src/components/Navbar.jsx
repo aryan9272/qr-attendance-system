@@ -18,6 +18,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
+import { fetchWithFailover } from '../utils/apiResolver';
 
 export default function Navbar() {
   const location = useLocation();
@@ -54,13 +55,13 @@ export default function Navbar() {
       // Fetch fresh session state and unterminated sessions from backend
       const token = localStorage.getItem('admin_token');
       if (token) {
-        const res = await fetch(`${backendUrl}/api/admin/me`, {
+        const { res, data } = await fetchWithFailover('/api/admin/me', {
           headers: {
             Authorization: `Bearer ${token}`,
             'x-admin-token': token,
           },
         });
-        if (res.status === 401) {
+        if (res && res.status === 401) {
           localStorage.removeItem('admin_token');
           localStorage.removeItem('admin_user');
           sessionStorage.clear();
@@ -70,7 +71,6 @@ export default function Navbar() {
           }
           return;
         }
-        const data = await res.json();
         if (data?.success && data?.admin) {
           setAdminUser(data.admin);
           localStorage.setItem('admin_user', JSON.stringify(data.admin));
@@ -142,7 +142,7 @@ export default function Navbar() {
       broadcastForceLogout();
       const token = localStorage.getItem('admin_token');
       if (token) {
-        await fetch(`${backendUrl}/api/admin/auth/logout`, {
+        await fetchWithFailover('/api/admin/auth/logout', {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
         }).catch(() => {});
@@ -164,7 +164,7 @@ export default function Navbar() {
       broadcastForceLogout();
       const token = localStorage.getItem('admin_token');
       if (token) {
-        await fetch(`${backendUrl}/api/admin/auth/logout-all`, {
+        await fetchWithFailover('/api/admin/auth/logout-all', {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'x-admin-token': token },
         }).catch(() => {});
@@ -205,7 +205,7 @@ export default function Navbar() {
     setIsSendingOtp(true);
     try {
       const token = localStorage.getItem('admin_token');
-      const res = await fetch(`${backendUrl}/api/admin/auth/request-change-password-otp`, {
+      const { res, data } = await fetchWithFailover('/api/admin/auth/request-change-password-otp', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -213,8 +213,7 @@ export default function Navbar() {
           'Content-Type': 'application/json',
         },
       });
-      const data = await res.json();
-      if (!data.success) throw new Error(data.message || 'Failed to send OTP.');
+      if (!data || !data.success) throw new Error(data?.message || 'Failed to send OTP.');
 
       setIsDevConsole(!!data.isDevConsole);
       setOtpSentMessage(data.message);
@@ -241,8 +240,8 @@ export default function Navbar() {
       return;
     }
 
-    if (!otpCode || otpCode.trim().length !== 6) {
-      setPasswordError('Please enter the 6-digit email OTP.');
+    if (otpCode && otpCode.trim().length > 0 && otpCode.trim().length !== 6) {
+      setPasswordError('Please enter a valid 6-digit OTP, or leave blank to update with current password.');
       return;
     }
 
@@ -250,7 +249,7 @@ export default function Navbar() {
 
     try {
       const token = localStorage.getItem('admin_token');
-      const res = await fetch(`${backendUrl}/api/admin/auth/change-password`, {
+      const { res, data } = await fetchWithFailover('/api/admin/auth/change-password', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -260,14 +259,12 @@ export default function Navbar() {
         body: JSON.stringify({
           currentPassword,
           newPassword,
-          otp: otpCode.trim(),
+          otp: otpCode ? otpCode.trim() : undefined,
         }),
       });
 
-      const data = await res.json();
-
-      if (!data.success) {
-        throw new Error(data.message || 'Failed to update master password.');
+      if (!data || !data.success) {
+        throw new Error(data?.message || 'Failed to update master password.');
       }
 
       if (data.token) {
@@ -483,13 +480,37 @@ export default function Navbar() {
               </div>
 
               <div className="space-y-1.5">
+                <label className="text-slate-300 font-semibold block">Confirm New Password</label>
+                <div className="relative">
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter new master password..."
+                    required
+                    className="w-full pl-4 pr-11 py-3 rounded-xl glass-input text-slate-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-cyan-300 transition-colors p-1 cursor-pointer"
+                    title={showConfirmPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-slate-300 font-semibold block">Owner Security OTP (6 Digits)</label>
+                  <label className="text-slate-300 font-semibold block">
+                    Owner Security OTP <span className="text-[10px] text-slate-400 font-normal">(Optional)</span>
+                  </label>
                   <button
                     type="button"
                     onClick={handleRequestChangeOtp}
                     disabled={isSendingOtp || cooldown > 0}
-                    className="text-[11px] text-cyan-400 hover:underline font-bold disabled:opacity-50"
+                    className="text-[11px] text-cyan-400 hover:underline font-bold disabled:opacity-50 cursor-pointer"
                   >
                     {isSendingOtp
                       ? 'Sending...'
@@ -503,8 +524,7 @@ export default function Navbar() {
                   maxLength={6}
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                  placeholder="Enter 6-digit OTP..."
-                  required
+                  placeholder="Enter 6-digit OTP (optional)..."
                   className="w-full px-4 py-3 rounded-xl glass-input text-cyan-300 font-bold tracking-[4px]"
                 />
               </div>

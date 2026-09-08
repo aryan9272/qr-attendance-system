@@ -81,10 +81,10 @@ exports.verifyAttendance = async (req, res) => {
       return res.status(400).json({ success: false, errorType: 'MISSING_FIELDS', error: 'Student Name, Registration No, and Email are required.' });
     }
 
-    // 1. Decrypt & Validate Dynamic AES Token (Strict 70s validity window)
+    // 1. Decrypt & Validate Dynamic AES Token (120s validity window)
     let tokenPayload = null;
     try {
-      const decResult = decryptToken(token, 70);
+      const decResult = decryptToken(token, 120);
       if (!decResult || !decResult.isValid || !decResult.payload) {
         return res.status(400).json({
           success: false,
@@ -129,8 +129,9 @@ exports.verifyAttendance = async (req, res) => {
             title: dbEvent.title,
             proctorName: dbEvent.proctorName,
             presenterName: dbEvent.presenterName,
-            latitude: 28.6139,
-            longitude: 77.2090,
+            latitude: dbEvent.latitude !== undefined && dbEvent.latitude !== null ? dbEvent.latitude : null,
+            longitude: dbEvent.longitude !== undefined && dbEvent.longitude !== null ? dbEvent.longitude : null,
+            isCalibrated: !!dbEvent.isCalibrated,
             allowedRadiusMeters: dbEvent.allowedRadiusMeters || 50,
             status: dbEvent.status,
             isEnded: dbEvent.isEnded,
@@ -150,8 +151,9 @@ exports.verifyAttendance = async (req, res) => {
           title: stored.title,
           proctorName: stored.proctorName,
           presenterName: stored.presenterName,
-          latitude: stored.latitude || 28.6139,
-          longitude: stored.longitude || 77.2090,
+          latitude: stored.latitude !== undefined && stored.latitude !== null ? stored.latitude : null,
+          longitude: stored.longitude !== undefined && stored.longitude !== null ? stored.longitude : null,
+          isCalibrated: !!stored.isCalibrated,
           allowedRadiusMeters: stored.allowedRadiusMeters || 50,
           status: stored.status,
           isEnded: stored.isEnded,
@@ -172,10 +174,10 @@ exports.verifyAttendance = async (req, res) => {
       });
     }
 
-    // 3. Adaptive Geofence Boundary Calculation: Boundary = Admin Radius + min(coords.accuracy, 30)
+    // 3. Adaptive Geofence Boundary Calculation: Boundary = Admin Radius + max(clientAccuracy, 30)
     const adminRadius = session.allowedRadiusMeters || 50;
-    const clientAccuracy = Number(req.body.accuracy) || 5;
-    const adaptiveAllowedRadius = adminRadius + Math.min(clientAccuracy, 30);
+    const clientAccuracy = Math.min(Math.max(Number(req.body.accuracy) || 5, 5), 75);
+    const adaptiveAllowedRadius = adminRadius + Math.max(clientAccuracy, 30);
     const isGeofenceEnabled = session.geofenceEnabled !== false;
 
     const studentLat = userLocation?.latitude;
@@ -1119,18 +1121,18 @@ exports.checkTokenStatus = (req, res) => {
       return res.status(200).json({ valid: false, expired: true, remainingSeconds: 0, error: 'No QR code token provided.' });
     }
 
-    const result = decryptToken(token, 70);
+    const result = decryptToken(token, 120);
     if (!result || !result.isValid || !result.payload) {
       return res.status(200).json({
         valid: false,
         expired: true,
         remainingSeconds: 0,
-        ageSeconds: result?.ageSeconds || 71,
+        ageSeconds: result?.ageSeconds || 121,
         error: 'QR code has expired. Please scan the current QR code on the screen.',
       });
     }
 
-    const remainingSeconds = Math.max(0, 70 - result.ageSeconds);
+    const remainingSeconds = Math.max(0, 120 - result.ageSeconds);
     return res.status(200).json({
       valid: true,
       expired: false,

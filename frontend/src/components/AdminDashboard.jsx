@@ -71,134 +71,7 @@ const OVERRIDE_REASONS = [
   'Other Administrative Reason',
 ];
 
-// Default seeded sessions from yesterday (2026-09-06) for instant offline history display
-const SEED_HISTORICAL_SESSIONS = [
-  {
-    sessionId: 'CS202-A81F',
-    labIdentifier: 'OS-LAB',
-    title: 'CS202: Advanced Operating Systems Lab',
-    proctorName: 'Prof. Sharma',
-    presenterName: 'Prof. Sharma',
-    totalAttendees: 3,
-    status: 'TERMINATED',
-    isEnded: true,
-    allowedRadiusMeters: 50,
-    createdAt: '2026-09-06T14:30:00.000Z',
-    endedAt: '2026-09-06T16:30:00.000Z',
-    terminatedAt: '2026-09-06T16:30:00.000Z',
-  },
-  {
-    sessionId: 'DSA-7C4E',
-    labIdentifier: 'DSA-LAB',
-    title: 'Data Structures and Algorithms Practical',
-    proctorName: 'Dr. Verma',
-    presenterName: 'Dr. Verma',
-    totalAttendees: 2,
-    status: 'TERMINATED',
-    isEnded: true,
-    allowedRadiusMeters: 50,
-    createdAt: '2026-09-06T11:00:00.000Z',
-    endedAt: '2026-09-06T12:45:00.000Z',
-    terminatedAt: '2026-09-06T12:45:00.000Z',
-  },
-  {
-    sessionId: 'CN301-5B9D',
-    labIdentifier: 'CN-LAB',
-    title: 'Computer Networks Lab Session',
-    proctorName: 'Faculty In-Charge',
-    presenterName: 'Faculty In-Charge',
-    totalAttendees: 1,
-    status: 'TERMINATED',
-    isEnded: true,
-    allowedRadiusMeters: 60,
-    createdAt: '2026-09-06T09:15:00.000Z',
-    endedAt: '2026-09-06T10:45:00.000Z',
-    terminatedAt: '2026-09-06T10:45:00.000Z',
-  },
-];
-
-// Seed attendance records for yesterday's sessions (offline export fallback)
-const SEED_ATTENDANCE_MAP = {
-  'CS202-A81F': [
-    {
-      studentId: '21BCE1042',
-      regNo: '21BCE1042',
-      studentName: 'Aarav Patel',
-      email: 'aarav.patel@college.edu',
-      year: 'B.Tech - 3rd Year',
-      branch: 'Computer Science and Engineering',
-      mobileNumber: '+91 9876543210',
-      verificationMode: 'GPS_VERIFIED',
-      distanceFromTargetMeters: 12,
-      timestamp: '2026-09-06T14:35:10.000Z',
-    },
-    {
-      studentId: '21BCE1088',
-      regNo: '21BCE1088',
-      studentName: 'Sneha Kulkarni',
-      email: 'sneha.k@college.edu',
-      year: 'B.Tech - 3rd Year',
-      branch: 'Computer Science and Engineering',
-      mobileNumber: '+91 9876543211',
-      verificationMode: 'GPS_VERIFIED',
-      distanceFromTargetMeters: 8,
-      timestamp: '2026-09-06T14:36:40.000Z',
-    },
-    {
-      studentId: '21BCE1104',
-      regNo: '21BCE1104',
-      studentName: 'Rohan Deshmukh',
-      email: 'rohan.d@college.edu',
-      year: 'B.Tech - 3rd Year',
-      branch: 'Computer Science and Engineering',
-      mobileNumber: '+91 9876543212',
-      verificationMode: 'ADMIN_MANUAL_OVERRIDE',
-      overrideReason: 'GPS drift inside basement lab',
-      distanceFromTargetMeters: 0,
-      timestamp: '2026-09-06T14:40:15.000Z',
-    },
-  ],
-  'DSA-7C4E': [
-    {
-      studentId: '22BCE2015',
-      regNo: '22BCE2015',
-      studentName: 'Ananya Sharma',
-      email: 'ananya.s@college.edu',
-      year: 'B.Tech - 2nd Year',
-      branch: 'Information Technology',
-      mobileNumber: '+91 9876543213',
-      verificationMode: 'GPS_VERIFIED',
-      distanceFromTargetMeters: 15,
-      timestamp: '2026-09-06T11:05:22.000Z',
-    },
-    {
-      studentId: '22BCE2033',
-      regNo: '22BCE2033',
-      studentName: 'Vikram Joshi',
-      email: 'vikram.j@college.edu',
-      year: 'B.Tech - 2nd Year',
-      branch: 'Information Technology',
-      mobileNumber: '+91 9876543214',
-      verificationMode: 'GPS_VERIFIED',
-      distanceFromTargetMeters: 18,
-      timestamp: '2026-09-06T11:08:50.000Z',
-    },
-  ],
-  'CN301-5B9D': [
-    {
-      studentId: '21ECE3001',
-      regNo: '21ECE3001',
-      studentName: 'Pooja Nair',
-      email: 'pooja.n@college.edu',
-      year: 'B.Tech - 3rd Year',
-      branch: 'Electronics and Communication',
-      mobileNumber: '+91 9876543215',
-      verificationMode: 'GPS_VERIFIED',
-      distanceFromTargetMeters: 22,
-      timestamp: '2026-09-06T09:20:18.000Z',
-    },
-  ],
-};
+const DUMMY_SESSION_IDS = ['CS202-A81F', 'DSA-7C4E', 'CN301-5B9D'];
 
 export default function AdminDashboard() {
   const {
@@ -224,10 +97,20 @@ export default function AdminDashboard() {
       const cached = localStorage.getItem('proxyqr_persisted_sessions');
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const genuine = parsed.filter(
+            (s) => s && s.sessionId && !DUMMY_SESSION_IDS.includes(String(s.sessionId).toUpperCase())
+          );
+          if (genuine.length !== parsed.length) {
+            try {
+              localStorage.setItem('proxyqr_persisted_sessions', JSON.stringify(genuine));
+            } catch (e) {}
+          }
+          return genuine;
+        }
       }
     } catch (e) {}
-    return SEED_HISTORICAL_SESSIONS;
+    return [];
   });
 
   // Helper to update sessionsList and write-through to localStorage
@@ -377,17 +260,11 @@ export default function AdminDashboard() {
         }
       }
     } catch (e) {
-      console.warn('[AdminDashboard] Fetch roster error, checking seed fallback:', e);
+      console.warn('[AdminDashboard] Fetch roster error:', e);
     }
 
-    // Client-side fallback if backend returns 0 or fails for seeded sessions
-    if (SEED_ATTENDANCE_MAP[sid]) {
-      setAttendeesRoster(SEED_ATTENDANCE_MAP[sid]);
-      setTotalCount(SEED_ATTENDANCE_MAP[sid].length);
-    } else {
-      setAttendeesRoster([]);
-      setTotalCount(0);
-    }
+    setAttendeesRoster([]);
+    setTotalCount(0);
   };
 
   useEffect(() => {
@@ -414,7 +291,7 @@ export default function AdminDashboard() {
       clearTimeout(updateGeofenceTimerRef.current);
       updateGeofenceTimerRef.current = null;
     }
-    const r = Math.min(500, Math.max(30, Number(newRadius) || 50));
+    const r = Math.min(500, Math.max(15, Number(newRadius) || 50));
     updateGeofence({
       sessionId: selectedSessionId,
       allowedRadiusMeters: r,
@@ -425,7 +302,7 @@ export default function AdminDashboard() {
   const handleRadiusChange = (newRadius) => {
     const raw = Number(newRadius);
     if (isNaN(raw)) return;
-    const clamped = Math.min(500, Math.max(30, raw));
+    const clamped = Math.min(500, Math.max(15, raw));
     isDraggingRadiusRef.current = true;
     setGeofenceRadius(clamped);
 
@@ -1477,7 +1354,7 @@ export default function AdminDashboard() {
                     <div className="flex items-center gap-1.5 bg-slate-900/90 px-2.5 py-1 rounded-xl border border-slate-800 focus-within:border-cyan-500/60 transition-all shadow-sm">
                       <input
                         type="number"
-                        min="30"
+                        min="15"
                         max="500"
                         step="5"
                         value={geofenceRadius}
@@ -1494,7 +1371,7 @@ export default function AdminDashboard() {
                   <div className="relative py-1">
                     <input
                       type="range"
-                      min="30"
+                      min="15"
                       max="500"
                       step="5"
                       value={geofenceRadius}
@@ -1505,7 +1382,7 @@ export default function AdminDashboard() {
                       onTouchEnd={handleRadiusCommit}
                       style={{
                         background: isGeofenceEnabled
-                          ? `linear-gradient(to right, #06b6d4 0%, #06b6d4 ${Math.min(100, Math.max(0, ((geofenceRadius - 30) / 470) * 100))}%, #1e293b ${Math.min(100, Math.max(0, ((geofenceRadius - 30) / 470) * 100))}%, #1e293b 100%)`
+                          ? `linear-gradient(to right, #06b6d4 0%, #06b6d4 ${Math.min(100, Math.max(0, ((geofenceRadius - 15) / 485) * 100))}%, #1e293b ${Math.min(100, Math.max(0, ((geofenceRadius - 15) / 485) * 100))}%, #1e293b 100%)`
                           : '#1e293b',
                       }}
                       className={`geofence-slider ${
@@ -1515,9 +1392,10 @@ export default function AdminDashboard() {
                   </div>
 
                   {/* Quick Select Preset Chips */}
-                  <div className="grid grid-cols-4 gap-2 pt-1">
+                  <div className="grid grid-cols-5 gap-1.5 pt-1">
                     {[
-                      { val: 30, label: '30m', desc: 'Lab' },
+                      { val: 15, label: '15m', desc: 'Lab' },
+                      { val: 30, label: '30m', desc: 'Room' },
                       { val: 75, label: '75m', desc: 'Hall' },
                       { val: 200, label: '200m', desc: 'Wing' },
                       { val: 500, label: '500m', desc: 'Campus' },
@@ -1532,14 +1410,14 @@ export default function AdminDashboard() {
                             handleRadiusChange(preset.val);
                             commitGeofenceRadius(preset.val);
                           }}
-                          className={`py-1.5 px-1 rounded-xl text-[11px] font-mono border transition-all text-center cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                          className={`py-1.5 px-0.5 rounded-xl text-[10px] font-mono border transition-all text-center cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
                             isSelected
                               ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200 font-bold shadow-[0_0_12px_rgba(6,182,212,0.3)] scale-[1.02]'
                               : 'bg-slate-900/80 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-slate-200'
                           }`}
                         >
                           <span className="font-bold">{preset.label}</span>
-                          <span className="text-[9px] opacity-75 ml-1">({preset.desc})</span>
+                          <span className="text-[8px] opacity-75 ml-0.5">({preset.desc})</span>
                         </button>
                       );
                     })}

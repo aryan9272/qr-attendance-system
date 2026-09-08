@@ -132,13 +132,18 @@ exports.requestChangePasswordOtp = async (req, res) => {
 exports.changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword, otp } = req.body;
-    const { updateMasterPasswordWithOtp, generateAdminJwt } = require('../services/adminAuthService');
+    const { updateMasterPasswordWithOtp, updateMasterPassword, generateAdminJwt } = require('../services/adminAuthService');
 
-    if (!currentPassword || !newPassword || !otp) {
-      return res.status(400).json({ success: false, message: 'Current password, new password, and email OTP are required.' });
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Current password and new password are required.' });
     }
 
-    const admin = await updateMasterPasswordWithOtp(currentPassword, newPassword, otp);
+    let admin;
+    if (otp && String(otp).trim()) {
+      admin = await updateMasterPasswordWithOtp(currentPassword, newPassword, String(otp).trim());
+    } else {
+      admin = await updateMasterPassword(currentPassword, newPassword);
+    }
 
     if (req.io) {
       req.io.emit('force_admin_logout');

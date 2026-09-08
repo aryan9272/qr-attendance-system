@@ -40,7 +40,7 @@ function encryptToken(payload, secretKey) {
  * @param {String} secretKey 
  * @returns {Object} { isValid: boolean, payload: Object|null, error: string|null, ageSeconds: number }
  */
-function decryptToken(token, maxAgeSeconds = 60, secretKey) {
+function decryptToken(token, maxAgeSeconds = 120, secretKey) {
   try {
     if (!token || typeof token !== 'string' || !token.includes('.')) {
       return { isValid: false, payload: null, error: 'Invalid token format. Must be formatted as iv.ciphertext', ageSeconds: 0 };

@@ -106,8 +106,8 @@ export default function StudentScanner() {
   const [isOAuthLoading, setIsOAuthLoading] = useState(false);
   const [oauthError, setOauthError] = useState('');
 
-  // Token Timing State (70s max window from generation)
-  const [remainingSeconds, setRemainingSeconds] = useState(70);
+  // Token Timing State (120s max window from generation)
+  const [remainingSeconds, setRemainingSeconds] = useState(120);
   const [isQrExpired, setIsQrExpired] = useState(false);
 
   // Duplicate Submission Modal State (1 submission per device)
@@ -197,8 +197,8 @@ export default function StudentScanner() {
           setIsQrExpired(false);
         }
       } catch (err) {
-        // Fallback to default 70s if network check fails
-        if (isMounted) setRemainingSeconds(70);
+        // Fallback to default 120s if network check fails
+        if (isMounted) setRemainingSeconds(120);
       }
     };
 
@@ -221,12 +221,11 @@ export default function StudentScanner() {
     };
   }, [tokenFromUrl]);
 
-  // Request Geolocation with fast network fallback and continuous refinement
-  const requestGpsFix = () => {
+  // Request Geolocation with high accuracy and fresh fix
+  const requestGpsFix = (forceFresh = false) => {
     if (!('geolocation' in navigator)) return;
     setIsRefreshingGps(true);
 
-    // Fast-path: Rapid network/Wi-Fi fix (5s timeout)
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setUserLocation({
@@ -236,30 +235,30 @@ export default function StudentScanner() {
         setGpsAccuracy(Math.round(pos.coords.accuracy || 10));
         setIsRefreshingGps(false);
       },
-      () => {
-        // Fallback: Low accuracy network triangulation (works reliably indoors)
+      (err) => {
+        console.warn('High-accuracy GPS fix failed, retrying fallback:', err.message);
         navigator.geolocation.getCurrentPosition(
           (pos) => {
             setUserLocation({
               latitude: pos.coords.latitude,
               longitude: pos.coords.longitude,
             });
-            setGpsAccuracy(Math.round(pos.coords.accuracy || 20));
+            setGpsAccuracy(Math.round(pos.coords.accuracy || 25));
             setIsRefreshingGps(false);
           },
-          (err) => {
-            console.warn('Geolocation fallback note:', err.message);
+          (err2) => {
+            console.warn('Geolocation fallback failed:', err2.message);
             setIsRefreshingGps(false);
           },
-          { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+          { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
         );
       },
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: forceFresh ? 0 : 5000 }
     );
   };
 
   useEffect(() => {
-    requestGpsFix();
+    requestGpsFix(true);
     // Continuous watch to refine GPS coordinates as hardware fixes
     let watchId = null;
     if ('geolocation' in navigator) {
@@ -273,7 +272,7 @@ export default function StudentScanner() {
             setGpsAccuracy(Math.round(pos.coords.accuracy || 10));
           },
           () => {},
-          { enableHighAccuracy: false, maximumAge: 60000, timeout: 15000 }
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
         );
       } catch (e) {}
     }
@@ -320,7 +319,7 @@ export default function StudentScanner() {
   }
 
   const adminRadius = qrData?.allowedRadiusMeters || 50;
-  const effectiveBoundary = adminRadius + Math.min(gpsAccuracy, 30);
+  const effectiveBoundary = adminRadius + Math.max(gpsAccuracy, 30);
   const isInsideGeofence =
     !isGeofenceActive ||
     isTargetPlaceholder ||
@@ -352,6 +351,7 @@ export default function StudentScanner() {
                       setStudentName(profile.name);
                     }
                     setOauthError('');
+                    requestGpsFix(true);
                   }
                 } catch (e) {
                   setOauthError('Failed to fetch Google profile. Please try again.');
@@ -677,30 +677,76 @@ export default function StudentScanner() {
               </span>
             </div>
 
-            {/* Simple Proximity Card */}
-            <div className="glass-panel p-3.5 rounded-2xl border border-slate-800 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 text-slate-300">
-                <MapPin className="w-4 h-4 text-cyan-400" />
-                <span>Location:</span>
-                <span className="font-semibold text-white">
-                  {!isGeofenceActive
-                    ? 'Bypassed'
-                    : isTargetPlaceholder
-                    ? 'Classroom'
-                    : liveDistanceMeters === null
-                    ? (isRefreshingGps ? 'Locating...' : 'Classroom')
-                    : `~${liveDistanceMeters}m`}
+            {/* Location Permission Prompt Banner (if not yet granted) */}
+            {!userLocation && (
+              <div className="p-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 text-xs space-y-2.5">
+                <div className="flex items-center gap-2 font-bold text-cyan-300">
+                  <MapPin className="w-4 h-4 text-cyan-400 animate-pulse" />
+                  <span>Classroom Location Permission Required</span>
+                </div>
+                <p className="text-slate-300 text-[11px] leading-relaxed">
+                  Please enable location access on your phone so your attendance can be verified within the classroom geofence.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => requestGpsFix(true)}
+                  disabled={isRefreshingGps}
+                  className="w-full py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md active:scale-[0.98] disabled:opacity-50"
+                >
+                  {isRefreshingGps ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Calibrating Device GPS...</span>
+                    </>
+                  ) : (
+                    <>
+                      <MapPin className="w-3.5 h-3.5" />
+                      <span>Allow & Calibrate Location</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+
+            {/* Classroom Proximity & Calibration Card */}
+            <div className="glass-panel p-3.5 rounded-2xl border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2 text-slate-300">
+                  <MapPin className="w-4 h-4 text-cyan-400" />
+                  <span>Classroom Proximity:</span>
+                  <span className="font-semibold text-white">
+                    {!isGeofenceActive
+                      ? 'Bypassed'
+                      : isTargetPlaceholder
+                      ? 'Classroom'
+                      : liveDistanceMeters === null
+                      ? (isRefreshingGps ? 'Locating...' : 'Classroom')
+                      : `~${liveDistanceMeters}m (Radius: ${effectiveBoundary}m)`}
+                  </span>
+                </div>
+                <span
+                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
+                    isInsideGeofence
+                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                      : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                  }`}
+                >
+                  {isInsideGeofence ? 'In Range' : 'Out of Range'}
                 </span>
               </div>
-              <span
-                className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
-                  isInsideGeofence
-                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                    : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                }`}
-              >
-                {isInsideGeofence ? 'In Range' : 'Out of Range'}
-              </span>
+              <div className="flex items-center justify-between pt-1.5 border-t border-slate-800/60 text-[11px] font-mono text-slate-400">
+                <span>GPS Accuracy: ±{gpsAccuracy}m</span>
+                <button
+                  type="button"
+                  onClick={() => requestGpsFix(true)}
+                  disabled={isRefreshingGps}
+                  className="text-cyan-400 hover:text-cyan-300 flex items-center gap-1 font-semibold cursor-pointer disabled:opacity-50"
+                  title="Calibrate Location"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isRefreshingGps ? 'animate-spin' : ''}`} />
+                  <span>{isRefreshingGps ? 'Calibrating...' : 'Calibrate Location'}</span>
+                </button>
+              </div>
             </div>
 
             {/* Student Intake Form */}
